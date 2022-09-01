@@ -1937,6 +1937,8 @@ DOM3级事件在DOM2级事件的基础上添加了更多的事件类型，增加
 - `Access-Control-Request-Method`：用于发起一个预请求，告知服务器正式请求会使用哪一种 HTTP 请求方法
 - `Origin`：指示获取资源的请求是从什么域发起的
 
+> 一般而言，对于跨源 XMLHttpRequest 或 Fetch 请求，浏览器 不会 发送身份凭证信息。如果要发送凭证信息，需要设置 `XMLHttpRequest` 的某个特殊标志位。（XMLHttpRequest的`withCredentials = true`或Fetch的`credentials: 'include'`）
+
 ```js
 // 允许 credentials:
 Access-Control-Allow-Credentials: true
@@ -1958,6 +1960,826 @@ fetch(url, {
 - 使用 drawImage 将 Images/video 画面绘制到 canvas
 - WebGL textures
 - image shappes
+
+
+##### 简单请求
+> 使用CORS时，只有非`简单请求`不会触发`预检请求`
+
+满足下列所有条件则可视为简单请求：
+1. 使用以下方法之一：
+    - GET
+    - POST
+    - HEAD
+
+2. 人为设置的请求头在以下请求头之内
+    - Accept
+    - Accept-Language
+    - Content-Language
+    - Content-Type（值有限制）
+
+3. Content-Type的值仅限以下之一
+    - text/plain
+    - multipart/form-data
+    - application/x-www-form-urlencoded
+
+4. 请求中的任意 XMLHttpRequest 对象均没有注册任何事件监听器；XMLHttpRequest 对象可以使用 XMLHttpRequest.upload 属性访问
+
+5. 请求中没有使用 ReadableStream 对象
+
+##### 预检请求
+> 与前述简单请求不同，“需预检的请求”要求必须`首先使用 OPTIONS 方法发起一个预检请求到服务器，以获知服务器是否允许该实际请求`。"预检请求“的使用，`可以避免跨域请求对服务器的用户数据产生未预期的影响`。
+
+```js
+// 预检请求示例
+const xhr = new XMLHttpRequest();
+xhr.open('POST', 'https://bar.other/resources/post-here/');
+xhr.setRequestHeader('X-PINGOTHER', 'pingpong');
+xhr.setRequestHeader('Content-Type', 'application/xml');
+xhr.onreadystatechange = handler;
+xhr.send('<person><name>Arun</name></person>');
+
+```
+
+![avatar](./assets/cors_preflight.png)
+
+下面是服务端和客户端完整的信息交互。首次交互是 预检请求/响应：
+
+```
+OPTIONS /doc HTTP/1.1
+Host: bar.other
+User-Agent: Mozilla/5.0 (Macintosh; Intel Mac OS X 10.14; rv:71.0) Gecko/20100101 Firefox/71.0
+Accept: text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8
+Accept-Language: en-us,en;q=0.5
+Accept-Encoding: gzip,deflate
+Connection: keep-alive
+Origin: https://foo.example
+Access-Control-Request-Method: POST
+Access-Control-Request-Headers: X-PINGOTHER, Content-Type
+
+HTTP/1.1 204 No Content
+Date: Mon, 01 Dec 2008 01:15:39 GMT
+Server: Apache/2
+Access-Control-Allow-Origin: https://foo.example
+Access-Control-Allow-Methods: POST, GET, OPTIONS
+Access-Control-Allow-Headers: X-PINGOTHER, Content-Type
+Access-Control-Max-Age: 86400
+Vary: Accept-Encoding, Origin
+Keep-Alive: timeout=2, max=100
+Connection: Keep-Alive
+```
+
+##### demo
+客户端代码：
+```html
+<!DOCTYPE html>
+<html>
+
+<head>
+    <meta charset="utf-8" />
+    <meta http-equiv="X-UA-Compatible" content="IE=edge">
+    <title>Page Title</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+</head>
+
+<body>
+    <div class="hook"></div>
+    <script>
+        var target = document.querySelector('.hook');
+        var xhr = new XMLHttpRequest();
+        xhr.onload = function () {
+            if (xhr.readyState == 4) {
+                if (xhr.status >= 200 && xhr.status < 300 || xhr.status == 304) {
+                    target.innerHTML = xhr.responseText;
+                    console.log(xhr.responseText);
+                } else {
+                    target.innerHTML = 'Reuqest failed:' + xhr.status;
+                    console.log("Request failed:", xhr.status);
+                }
+            }
+        }
+        // xhr.widthCredientials = true;
+        xhr.open('post', 'http://localhost:8080', true);
+        xhr.setRequestHeader('Content-Type', 'application/x-www-form-urlencoded');
+        xhr.setRequestHeader('X-Stage-Test', 0);
+        xhr.send('name=fn&id=12377');
+    </script>
+</body>
+
+</html>
+
+```
+
+服务端处理：
+```js
+var qs = require('querystring');
+var http = require('http');
+var server = http.createServer();
+
+server.on('request', function(req, res) {
+    var _data = '';
+    req.on('data', function (chunk) {
+        _data += chunk;
+    })
+
+    req.on('end', function () {
+        res.writeHead(200, 'success', {
+            'Content-Type': 'application/x-www-form-urlencoded',
+            'Access-Control-Allow-Origin': '*',
+            'Access-Control-Allow-Headers': 'Content-Type, X-Stage-Test',
+            'Access-Control-Allow-Methods': 'GET, GET, POST',
+        })
+
+        res.end('message from client: ' + _data)
+    })
+})
+
+server.listen(8080);
+console.log('server is running at port 8080...');
+```
+
+![avatar](./assets//cors-preflight-demo.png)
+![avatar](./assets//cors-preflight-demo2.png)
+
+
+#### JSONP
+
+##### 原理
+script标签请求的资源不受同源策略限制，但JSONP跨域需要服务器端相应的处理才能支持；
+
+JSONP跨域通常可以动态创建一个script标签，然后在请求的url中带上一些处理参数，一般是一个回调函数；服务端在接收到请求后，从请求中获得处理参数，然后将处理结果返回给客户端；如果返回的是函数调用，那么客户端的回调函数就会被调用执行；
+
+> 除了 script 标签， link、img 等标签的请求也是允许跨域的。
+
+##### 限制
+`JSONP只支持GET请求方式`，本质上是因为script标签请求资源的方式就是GET；另外，根据实现过程可以看到，`jsonp的返回是一个函数调用，容易导致XSS攻击等安全问题`；
+
+##### 实现
+客户端代码如下，其URL为http://localhost:8001/test/test1.html；请求的服务器地址为：http://localhost:8080/；为了跨域，在请求的url加入一个callback参数指定jsonp回调函数名称；服务端接收到请求后从中提取请求参数及回调函数名，然后将对应的回调函数包裹相应参数返回给客户端handleCallback(id)；这时客户端的handleCallback()函数就会被自动调用。
+
+```html
+// 客户端
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta http-equiv="X-UA-Compatible" content="IE=edge">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Document</title>
+</head>
+
+<body>
+    <button onclick="jsonp();">request</button>
+    <div id='req_times'></div>
+    <script>
+        function jsonp() {
+            console.log(123)
+            var script = document.createElement('script');
+            script.type = 'text/javascript';
+            script.src = 'http://localhost:8080?callback=handleCallback';
+            document.head.appendChild(script);
+        }
+
+        // jquery请求方式
+        // function ajax() {
+        //     $.ajax({
+        //         url: 'http://localhost:8080',
+        //         type: 'GET',
+        //         dataType: 'jsonp',
+        //         jsonpCallback: 'handleCallback',
+        //     })
+        // }
+
+        function handleCallback(id) {
+            console.log('handleCallback request times：', id);
+            document.querySelector('#req_times').innerHTML = `handleCallback request times：${encodeURI(id)}`
+        }
+    </script>
+</body>
+
+</html>
+```
+
+服务端处理：
+```js
+var qs = require('querystring');
+var http = require('http');
+var server = http.createServer();
+
+var id = 0;
+
+server.on('request', function (req, res) {
+    console.log(req.url);
+    console.log(req.url.split('?'));
+    var params = qs.parse(req.url.split('?')[1]);
+    
+    var fn = params.callback;
+
+    res.writeHead(200, {'Content-Type': 'text/javascript'});
+    res.write(fn + '(' + id++ + ')');
+    res.end();
+})
+
+server.listen('8080');
+console.log('server is running at port 8080...');	
+```
+
+
+#### postMessage
+##### API介绍
+```js
+targetWindow.postMessage(message, targetOrigin, [transfer]); // 发送消息
+
+window.onmessage = function (e) {
+    // console.log(e.data); //e对象下具有data，source及origin属性
+}
+```
+
+其中，`targetWindow`是想要通信的其他页面的window对象；`targetOrigin`是预通信的其他页面的域名，可以设置为*与任何页面通信，但出于安全考虑不建议；`mesage是要进行通信的数据，已经可以支持字符串、对象等多种数据类型`；transfer是可选参数，表示一个与message同时发送到接收方的Transferable对象，控制权由发送方转移到接收方；
+
+onmessage监听消息，回调函数传入对象e，具有属性data、source、origin；`data`是传递的数据；`source`是对发送方window对象的引用；`origin`是发送方的域名；
+
+
+##### demo
+
+```html
+// index.html 域名localhost:8001
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta http-equiv="X-UA-Compatible" content="ie=edge">
+  <title>Document</title>
+</head>
+<body>
+  <h1>HTML5 postMessage</h1>
+  <p></p>
+  <iframe src="http://localhost:8888/test/sub.html" frameborder="0" onload="load()"></iframe>
+  <script>
+    function load() {
+      var iframe = document.querySelector('iframe');
+      iframe.contentWindow.postMessage('i need some msg from you.', 'http://localhost:8888');
+      // window.postMessage({'name': 'post', method: 'cors'}, 'http://localhost:8880/test/sub.html');
+      window.onmessage = function (e) {
+        console.log(e.data);
+      }
+    }
+  </script>
+</body>
+</html>
+
+```
+
+```js
+// sub.html
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta http-equiv="X-UA-Compatible" content="ie=edge">
+  <title>Document</title>
+</head>
+<body>
+  <script>
+    window.onmessage = function (e) {
+      console.log(e.data);
+      e.source.postMessage({'name': 'post', method: 'cors'}, e.origin);
+    }  
+  </script>
+</body>
+</html>
+```
+
+运行结果：
+```js
+i need some msg from you. // sub.html输出
+{name: "post", method: "cors"}	// index.html输出
+```
+
+#### WebSocket
+
+WebSocket是HTML5新增的一种用于客户端和服务端进行`全双工通信`的协议，可以在客户端和服务端建立一个持久化的连接，并且在一个TCP连接中高效双向数据传递；
+
+
+服务端代码：
+```js
+const WebSocket = require('ws');
+
+const socket = new WebSocket.Server({ port: 5555 });
+
+socket.on('connection', ws => {
+    ws.on('message', (data) => {
+        console.log('data from client: ', data);
+        ws.send('hello websocket...');
+        console.log('server finish sending data...')
+    })
+})
+
+```
+
+客户端代码：
+```html
+<!DOCTYPE html>
+<html>
+
+<head>
+    <meta charset="utf-8" />
+    <meta http-equiv="X-UA-Compatible" content="IE=edge">
+    <title>Page Title</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+</head>
+
+<body>
+    <div class="hook"></div>
+    <script>
+        SocketEvent = () => {
+
+            if (window.WebSocket) {
+                console.log('llll')
+                var socket = new WebSocket('ws://localhost:5555');
+
+                socket.onopen = function () {
+                    console.log('client socket opening...');
+                    socket.send(`I'm requesting some data from you...`);
+                }
+                socket.onmessage = function (e) {
+                    console.log('on message', e);
+                    console.log('on message data', e.data);
+                }
+                socket.onclose = function (e) {
+                    console.log('client socket closing...');
+                }
+            }
+        }
+    </script>
+    <button onclick="SocketEvent()">socket</button>
+</body>
+
+</html>
+```
+
+#### document.domain + iframe
+
+`document.domain跨域的基础是二级域名、协议及端口号要一致，通过document.domain修改页面的域名，从而达到同一顶级域名下的子域名间的跨域`；举个例子：
+比如一主页面的域名是sale.game.abc.com，内嵌一个iframe，如下：
+```JS
+<iframe id="demo" src="http://gamestatic.abc.com/game/test/a.html">
+```
+
+由于主页面的域名与嵌入的子页面的二级域名是一致的，都是abc.com，因此可以使用该方法进行跨域；需要在主页面和子页面的脚本中分别使用以下语句将页面的域名置为abc.com；
+
+```JS
+document.domain = 'abc.com';
+
+```
+
+这样，`父级页面就可以获取iframe子页面的document对象，并且获取和操作子页面的dom元素了；否则，受跨域限制直接在不同子域名下的两个关联页面也无法操作对方的dom`；
+
+
+#### window.name + iframe
+
+##### window.name特性
+- `window.name`是一个全局变量
+- 每个窗口有一个独立的`window.name`与之对应，默认值为空字符串
+- `window.name与每个窗口的生命周期相关`，`同一个窗口载入的多个页面同享同一个window.name值`，窗口关闭则对应的window.name也被销毁；
+- 不同窗口打开的同一域名的两个页面的`window.name`不能共享；
+- window.name数据格式可以自定义，大小一般不超过2M；
+
+
+#### node正向代理
+
+##### 原理
+`同源策略是浏览器端的安全策略；如果把请求通过node服务器代理请求，那么就没有跨域限制了`；`http-proxy-middleware`是node中常用的设置代理的插件库，可以与express、connet等配合使用
+
+##### demo
+```js
+const http = require('http');
+const server = http.createServer();
+const qs = require('qs');
+const url = require('url');
+
+let count = 0;
+
+server.on('request', (req, res) => {
+    count++;
+    const query = url.parse(req.url, true).query;
+    res.writeHead(200, {
+        'Set-Cookie', 'name=fn;Path=/;Domain=localhost:6688;HttpOnly'
+    })
+    query.count == 1 ? res.write(`Response from Server -- localhost:6688; visit count: ${count}`) : res.write(`Response from Server -- localhost:6688; no tracking...`);
+    res.end();
+})
+
+server.listen(6688);
+console.log('server is running at port 6688...')
+```
+
+```js
+const express = require('express');
+const proxy = require('http-proxy-middleware');
+const app = express();
+
+const options = {
+    target = 'http://localhost:6688',
+    changeOrigin: true,
+    onProxyRes: (proxyRes, req, res) => {
+        res.header('Access-Control-Allow-Origin', 'http:localhost');
+        res.header('Access-Control-Allow-Credentials', true);
+        proxyRes.headers['x-self-defined'] = 'node middleware';
+    }
+}
+
+app.use('./api', proxy(options));
+
+app.listen(8002);
+console.log('proxy server is listen at port 8002');
+
+```
+
+访问`http://localhost:6688/api?count=0`后可以看到
+![avatar](./assets/forward_proxy.jpg)
+
+
+#### nginx反向代理
+##### 原理
+与node中间件的原理一样，都是利用服务端不受同源策略限制的特点，使用同域名的反向代理服务器转发请求，从而进行跨域；
+
+##### 实现
+
+```
+# nginx配置
+
+worker_processes 1; // 工作进程数，与CPU相同
+
+events: {
+    connections 1024; // 每个进程最大连接数
+}
+
+http {
+    sendfile on; // 高效文件传输模式
+    server {
+        listen 80;
+        server_name localhost;
+        # 负载均衡与反向代理
+        location / {
+            root html;
+            index index.html index.htm;
+        }
+        location /test.html {
+            proxy_pass http:localhost:6688
+        }
+    }
+}
+```
+
+```js
+// server.js  http://localhost:6688
+const http = require('http');
+const server = http.createServer();
+const qs = require('querystring');
+const url = require('url');
+
+let count= 0;
+
+server.on('request', (req, res) => {
+  // var params = url.parse(req.url, true);
+  var params = qs.parse(req.url.split('?')[1]);
+  res.write(JSON.stringify(params));
+  res.end(`port: 6688`);
+})
+
+server.listen(6688);
+console.log('server is running at port 6688...')
+```
+
+此时，直接访问`localhost/test.html`域名时`nginx会将请求代理到localhost:6688`域名下，从而实现跨域；
+
+### Event Loop
+
+JS是非阻塞的单线程语言，
+
+#### 宏任务与微任务
+
+- 微任务：`process.nextTick`、`promise`、`Object.observe`、`MutaionObserver`
+- 宏任务： `script`、`setTimeout`、`setInterval`、`setImmediate`、`I/O`、`UI rendering`
+
+#### 一次Event Loop的执行顺序
+
+- 执行同步代码，这属于宏任务 
+- 执行栈为空，查询是否有微任务需要执行
+- 执行所有微任务
+- 必要的话渲染UI
+- 然后开始下一轮 Event loop
+
+##### demos
+```js
+async function async1() {
+    console.log("async1 start");
+    await async2();
+    console.log("async1 end");
+}
+
+async function async2() {
+    console.log("async2");
+}
+
+console.log("script start");
+
+setTimeout(function() {
+    console.log("setTimeout");
+}, 0);
+
+async1();
+
+new Promise(function(resolve) {
+    console.log("promise1");
+    resolve();
+}).then(function() {
+    console.log("promise2");
+});
+
+console.log("script end");
+// script start -> async1 start -> async2 -> promise1 ->
+// script end -> async1 end -> promise2 -> setTimeout
+```
+
+
+#### Node中Event Loop
+> Node中的Event Loop和浏览器中的不相同
+
+
+##### 当nodejs启动时，会执行三件事：
+- 初始化`Event Loop`;
+- 开始执行脚本；
+- 进入`Event Loop`；
+
+共有6个阶段，并按顺序反复执行：
+![avatar](./assets/eventLoop.png)
+
+
+
+##### timers阶段
+
+处理`setTimeout`和`setInterval`中到时的回调函数，对于timers中队列的处理，setTimeout或setInterval中的函数都添加到队列里，同时记下来这些函数什么时间被调用到了调用时间就调用，没到时间就进入下一阶段，然后会停留在poll阶段
+
+##### I/O callback阶段
+
+I/O 阶段会执行除了 close 事件、定时器及setImmediate的其他回调
+
+###### idle, prepare
+idle, prepare 阶段内部实现，暂时不深究
+
+##### poll(轮询)
+poll 阶段很重要，这一阶段中，系统会做两件事情：
+- 执行到点的定时器
+- 执行 poll 队列中的事件
+
+并且当 poll 中没有定时器的情况下，会发现以下两件事情
+- 如果 poll 队列不为空，会遍历回调队列并同步执行，直到队列为空或者系统限制
+- 如果 poll 队列为空，会有两件事发生
+    - 如果有 `setImmediate` 需要执行，poll 阶段会停止并且进入到 `check` 阶段执行 `setImmediate`；
+    - 如果没有 `setImmediate` 需要执行，会等待回调被加入到队列中并立即执行回调
+
+如果有别的定时器需要被执行，会回到 timer 阶段执行回调
+
+##### check
+check 阶段执行 `setImmediate`;
+
+##### close callbacks
+close callbacks 阶段执行 close 事件
+
+##### nextTick
+
+> 进入每个阶段前都会执行，也就是当前阶段结束后立马执行nextTick，然后进入下一阶段，包括nodejs启动的时候也会执行
+
+> Node 中的 `process.nextTick` 会先于其他 `microtask` 执行。
+
+```js
+setTimeout(() => {
+    console.log('timeout')
+    process.nextTick(() => {
+        console.log('timeout next tick')
+    })
+})
+setImmediate(() => {
+    console.log('immediate')
+})
+process.nextTick(() => {
+    console.log('next tick')
+})
+// next tick -> timeout -> timeout next tick -> immediate
+```
+
+```js
+var fs = require('fs')
+
+fs.readFile(__filename, () => {
+  setTimeout(() => {
+    console.log('timeout')
+  }, 0)
+  setImmediate(() => {
+    console.log('immediate')
+  })
+})
+// 因为 readFile 的回调在 poll 中执行
+// 发现有 setImmediate ，所以会立即跳到 check 阶段执行回调
+// 再去 timer 阶段执行 setTimeout
+// 所以以上输出一定是 setImmediate，setTimeout
+```
+
+上面介绍的都是 macrotask 的执行情况，microtask 会在以上每个阶段完成后立即执行。
+```js
+setTimeout(() => {
+  console.log('timer1')
+
+  Promise.resolve().then(function() {
+    console.log('promise1')
+  })
+}, 0)
+
+setTimeout(() => {
+  console.log('timer2')
+
+  Promise.resolve().then(function() {
+    console.log('promise2')
+  })
+}, 0)
+
+// 以上代码在浏览器和 node 中打印情况是不同的
+// 浏览器中一定打印 timer1, promise1, timer2, promise2
+// node 中可能打印 timer1, timer2, promise1, promise2
+// 也可能打印 timer1, promise1, timer2, promise2
+```
+
+
+### 存储
+
+#### cookie, localStorage, sessionStorage, indexDB对比
+
+|特性|cookie|localStorage|sessionStorage|indexDB|
+|-|-|-|-|-|
+|数据生命周期|一般由服务器生成，可以设置过期时间|持久存储，除非被清理，否则一直存在|会话级别，页面关闭就清理|除非被清理，否则一直存在|
+|数据存储大小|4kb|5M|5M|无限|
+|与服务端通信|每次都会携带在 header 中，对于请求性能影响|不参与|不参与|不参与|
+
+#### cookie安全性
+|属性|作用|
+|-|-|
+|value|如果用于保存用户登录态，应该将该值加密，不能使用明文的用户标识|
+|http-only|`用于阻止 JavaScript 通过 Document.cookie 属性访问 cookie`。注意，设置了 HttpOnly 的 cookie 在 JavaScript `初始化的请求中仍然会被发送`。减少 XSS 攻击|
+|secure|只能在协议为 HTTPS 的请求中携带|
+|same-site|规定浏览器不能在跨域请求中携带 Cookie，减少 CSRF 攻击；可选值有`Strict`、`Lax`、`None`|
+
+- Strict: 这意味`浏览器仅对同一站点的请求发送 cookie`，即请求来自设置 cookie 的站点。如果请求来自不同的域或协议（即使是相同域），则携带有 SameSite=Strict 属性的 cookie 将不会被发送。
+
+- Lax：这意味着 `cookie 不会在跨站请求中被发送`，如：加载图像或 frame 的请求。`但 cookie 在用户从外部站点导航到源站时，cookie 也将被发送`（例如，跟随一个链接）。这是 SameSite 属性未被设置时的默认行为。
+
+-None：这意味着`浏览器会在跨站和同站请求中均发送 cookie`。在`设置这一属性值时，必须同时设置 Secure 属性`，就像这样：SameSite=None; Secure。
+
+
+#### Service Worker
+> Service Workder相当于浏览器与web应用程序之间的代理服务器，可以捕获请求事件并做相应处理；目前主要用于`离线应用`以及`消息推送`及`后台同步`等；
+
+##### 特性
+- 无法直接访问和操作DOM
+- 在长时间不用时会被中止并在下次需要时重启
+- 可以访问和操作indexedDB API
+- 推荐使用HTTPS
+- 内部实现基于Promise
+
+##### 生命周期
+![avatar](./assets/service_worker_lifecycle.png)
+
+##### 事件
+![avatar](./assets/service_worker_event.png);
+
+##### demo
+1. 注册
+```js
+if ('serviceWorker' in navigator) {
+    window.addEventListener('load', () => {
+        navigator.serviceWorker.register('sw.js')
+            .then(registration => {
+                console.log('sw installed: ', registration);
+            })
+            .catch(err => console.log('sw installed failed: ', err));
+    })
+}
+```
+
+2. 安装Service Worker
+```js
+// 监听install事件并缓存所需文件
+var CACHE_NAME = 'sw-cache';
+var CACHE_URLS = ['./index.html', './index.js', './public/equal.png', './public/icon.png'];
+self.addEventListener('install', e => {
+    self.skipWaiting();  /* 跳过等待状态并尽快替代旧的SW进入活动状态 */
+    e.waitUntil(
+        caches.open(CACHE_NAME) // 打开缓存
+        .then(cache => cache.addAll(CACHE_URLS))
+    )
+})
+```
+
+3. 捕获请求并处理
+```js
+self.addEventListener('fetch', e => {
+    e.responseWith(
+        caches.match(e.request)
+        .then(res => { // 检测缓存资源和请求资源是否匹配， e.request具有以下属性：url/method/header/body
+            if (res) {
+                return res;
+            }
+            console.log('loaded from sw：', res);
+        })
+    )
+})
+```
+
+运行结果
+![avatar](./assets/serviceWorker.gif)
+
+在`cache Storage`中可以看到名为`sw-cache`的缓存；
+
+
+### 渲染机制
+
+#### 渲染流程
+浏览器的渲染机制一般分为以下几个步骤：
+1. 处理HTML并构建DOM树；
+2. 处理CSS并构建CSSOM树；
+3. 将DOM树和CSSOM树合并为一个渲染树；
+4. genj渲染树布局，计算每个节点的位置；
+5. 调用GPU绘制，合成图层，并显示在屏幕上；
+
+![avatar](./assets/rendering.png)
+
+> `在构建 CSSOM 树时，会阻塞渲染，直至 CSSOM 树构建完成`。并且`构建 CSSOM 树是一个十分消耗性能的过程，所以应该尽量保证层级扁平，减少过度层叠`，越是具体的 CSS 选择器，执行速度越慢。
+
+>当 HTML 解析到 script 标签时，会暂停构建 DOM，完成后才会从暂停的地方重新开始。也就是说，如果你想首屏渲染的越快，就越不应该在首屏就加载 JS 文件。并且 CSS 也会影响 JS 的执行，只有当解析完样式表才会执行 JS，所以也可以认为这种情况下，CSS 也会暂停构建 DOM。
+
+#### `Load`与`DOMContentLoaded`区别
+
+- Load 事件触发代表页面中的 DOM，CSS，JS，图片已经全部加载完毕。
+
+- DOMContentLoaded 事件触发代表初始的 HTML 被完全加载和解析，不需要等待 CSS，JS，图片加载
+
+
+#### 图层
+
+一般来说，可以把普通文档流看成一个图层。特定的属性可以生成一个新的图层。`不同的图层渲染互不影响，所以对于某些频繁需要渲染的建议单独生成一个新图层，提高性能`。但也不能生成过多的图层，会引起反作用。
+
+通过以下几个常用属性可以生成新图层
+- 3D变换：`translate3d`、`translateZ`
+- `will-change`
+- `video`、`iframe`标签
+- 通过动画实现的`opacity`动画转场
+- `position: fixed`
+
+#### 重绘（repaint）和重排/回流（reflow）
+
+- 重绘：节点改变外观但不会影响布局的，比如`color`；
+- 回流：节点尺寸、位置等发生变化导致重新布局的称为回流；
+
+> `回流一定伴随着重绘，但重绘不一定引发回流；回流所需的成本比重绘高的多`，改变深层次的节点很可能导致父节点的一系列回流。
+
+以下几个动作可能会触发性能问题：
+- 改变window大小
+- 改变字体
+- 增删样式
+- 文字改变
+- 定位或者浮动
+- 盒模型
+
+很多人不知道的是，重绘和回流其实和 Event loop 有关。
+
+1. 当 Event loop 执行完 Microtasks 后，会判断 document 是否需要更新。因为浏览器是 60Hz 的刷新率，每 16ms 才会更新一次。
+2. 然后判断是否有`resize`或者`scroll`，有的话会去触发事件，所以 `resize 和 scroll 事件也是至少 16ms 才会触发一次，并且自带节流功能`。
+3. 判断是否触发了`media query`
+4. 更新动画并且发送事件
+5. 判断是否有全屏操作事件
+6. 执行`requestAnimationFrame`回调
+7. 执行`IntersectionObserver`回调，该方法用于判断元素是否可见，可以用于懒加载上，但是兼容性不好
+8. 更新界面
+9. 以上就是一帧中可能会做的事情。如果在一帧中有空闲时间，就会去执行 requestIdleCallback 回调
+
+#### 减少重绘和回流
+
+- 使用 translate 替代 top
+- 使用 visibility 替换 display: none ，因为前者只会引起重绘，后者会引发回流（改变了布局）
+- 把 DOM 离线后修改，比如：先把 DOM 给 display:none (有一次 Reflow)，然后你修改 100 次，然后再把它显示出来
+- 不要把 DOM 结点的属性值放在一个循环里当成循环里的变量
+- 不要使用 table 布局，可能很小的一个小改动会造成整个 table 的重新布局
+- 动画实现的速度的选择，`动画速度越快，回流次数越多`，也可以选择使用 requestAnimationFrame
+- 将频繁运行的动画变为图层，图层能够阻止该节点回流影响别的元素
+
+
+
+
+
+
 
 
 
@@ -1982,3 +2804,6 @@ fetch(url, {
 7. [10 种跨域解决方案（附终极方案）](https://zhuanlan.zhihu.com/p/132534931)
 8. [CORS](https://developer.mozilla.org/zh-CN/docs/Glossary/CORS)
 9. [跨源资源共享（CORS）](https://developer.mozilla.org/zh-CN/docs/Web/HTTP/CORS)
+10. [跨域请求小结](https://blog.csdn.net/luofeng457/article/details/90478106)
+11. [关于 async 函数的理解](https://juejin.cn/post/6844903735290757133)
+12. [Service Worker简介](https://blog.csdn.net/luofeng457/article/details/102847261)
