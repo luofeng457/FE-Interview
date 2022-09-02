@@ -2777,7 +2777,454 @@ self.addEventListener('fetch', e => {
 
 
 
+___
 
+# 性能
+
+## 网络相关
+### DNS预解析
+
+DNS预解析将DNS解析的时间点提前，可以节约DNS解析的时间；
+```
+<link rel="dns-prefetch" href="//yuchengkai.cn" />
+```
+
+```js
+// 检测是否支持`dns-prefetch`
+const link = document.createElement('link');
+const relList = link.relList;
+if (!relList || relList.supports)
+    return false;
+return relList.supports('preload');
+
+```
+
+### 使用HTTP/2.0
+由于浏览器的并发请求数限制（通常5-8个），每个请求需要进行TCP三次握手和四次挥手的过程，而TCP的连接比较耗时；另外，TCP的`慢启动`的拥塞控制策略（TCP 连接会随着时间的推移自我调节，起初会限制连接的最大速度，如果数据传输成功，会随着时间的推移提高传输速度）也会一定程度影响传输效率
+
+HTTP/2.0支持了多路复用（多个请求复用一个TCP连接）、头部压缩，更够提升传输性能
+
+#### TCP三次握手与四次挥手
+
+TCP是一种面向连接的单播协议，在发送数据前，通信双方必须在彼此间建立一条连接。所谓的“连接”，其实是客户端和服务器的内存里保存的一份关于对方的信息，如ip地址、端口号等。
+
+TCP提供了一种`可靠`、`面向连接`、字节流、`传输层`的服务，采用三次握手建立一个连接。采用四次挥手来关闭一个连接
+
+##### TCP服务模型
+一个TCP连接由一个4元组构成，分别是两个`IP地址`和两个`端口号`。
+
+>一个TCP连接通常分为三个阶段：`启动`、`数据传输`、`退出（关闭）`。
+
+当TCP接收到另一端的数据时，它会发送一个确认，但这个确认不会立即发送，一般会延迟一会儿。ACK是累积的，一个确认字节号N的ACK表示所有直到N的字节（不包括N）已经成功被接收了。这样的好处是如果一个ACK丢失，很可能后续的ACK就足以确认前面的报文段了。
+
+> 序列号的作用是使得一个TCP接收端可丢弃重复的报文段，记录以杂乱次序到达的报文段。因为TCP使用IP来传输报文段，而IP不提供重复消除或者保证次序正确的功能。
+
+##### TCP头部
+![avatar](./assets/tcp_header.jpg)
+
+![avatar](./assets/tcp_header_2.jpg)
+![avatar](./assets/tcp_header_3.jpg)
+
+> 源端口和目的端口在TCP层确定双方进程，`序列号`表示的是报文段数据中的第一个字节号，`ACK`表示确认号，该确认号的发送方期待接收的下一个序列号，即最后被成功接收的数据字节序列号加1，这个字段只有在ACK位被启用的时候才有效。
+
+
+
+- ACK：确认，使得确认号有效；
+- RST：重置连接（经常看到的reset by peer）就是此字段搞的鬼；
+- SYN：用于初始化一个连接的序列号；
+- FIN：该报文段的发送方已经结束向对方发送数据。
+- 2的16次方等于 65536，所以系统中端口号的限制个数为 65536，`一般1024以下端口被系统占用`；
+- seq 序列号，ack 确认序列号，序列号在数据传输时分包用到。`三次握手时 seq 序列号是随机的，没有实际意义`；
+
+当一个连接被建立或被终止时，交换的报文段只包含TCP头部，而没有数据。
+
+
+
+
+##### 状态转移
+
+- `标志位`、`随机序列号`和`确认序列号`是在数据包的 TCP 首部里面；
+- 几个状态是指客户端和服务端连接过程中`socket`状态；
+
+
+![avatar](./assets/tcp_connect_close.jpg)
+
+![avatar](./assets/tcp.jpg)
+
+![avatar](./assets/tcp_connect.jpg)
+
+- 第一次握手，客户端向服务端发送数据包，该数据包中 SYN 标志位为 1，还有随机生成的序列号c_seq，客户端状态改为 `SYN-SENT`；
+
+- 第二次握手，服务端接收到客户端发过来的数据包中 SYN 标志位为 1，就知道客户端想和自己建立连接，服务端会根据自身的情况决定是拒绝连接，或确定连接，还是丢弃该数据包；
+    - 拒绝连接，会往客户端发一个数据包，该数据包中 `RST` 标志位为 1，客户端会报 `Connection refused`；
+    - 丢弃客户端的数据包，超过一定时间后客户端会报 `Connection timeout`；
+    - 确定连接时会往客户端发一个数据包，该数据包中 ACK 标志位为 1，确认序列号 ack=c_seq+1，SYN 标志位为 1，随机序列号 s_seq，状态由 `LISTEN` 改为 `SYN-RCVD`；
+
+- 第三次握手，客户端接收到数据包会做校验，校验ACK标志位和确认序列号 ack=c_seq+1，如果确定是服务端的确认数据包，改自己的状态为 ESTABLISHED，并给服务端发确认数据包；
+
+- 服务端接到客户端数据包，会`校验ACK标志位和确认序列号 ack=s_seq+1`，改自己的状态为 ESTABLISHED，之后就可以进行数据传输了；
+
+- 建立连接时的数据包是没有实际内容的，没有应用层的数据
+
+![avatar](./assets/tcp_close.jpg)
+
+> 服务端会根据自身情况，没有要处理的数据时会把第二次和第三次挥手合并成一次挥手，此时标志位 FIN=1 / ACK=1；
+
+> `MSL`是 `Maximum Segment Lifetime` 缩写，`指数据包在网络中最大生存时间`，RFC 建议是 2分钟；
+
+- 客户端、服务端都可以主动发起断开连接；
+
+- 第一次挥手，客户端向服务端发送含 FIN=1 标志位的数据包，随机序列号 seq=m，此时客户端状态由 ESTABLISHED 变为 FIN_WAIT_1；
+
+- 第二次挥手，服务端收到含 FIN=1 标志位的数据包，就知道客户端要断开连接，服务端会向客户端发送含 ACK=1 标志位的应答数据包，确认序列号 ack=m+1，此时服务端状态由 ESTABLISHED 变为 CLOSE_WAIT；
+
+- 客户端收到含 ACK=1 标志位的应答数据包，知道服务端的可以断开的意思，此时客户端状态由 `FIN_WAIT_1 变为 FIN_WAIT_2`；（第一、二次挥手也只是双方交换一下意见而已）
+
+- 第三次挥手，`服务端处理完剩下的数据后再次向客户端发送含 FIN=1 标志位的数据包`，随机序列号 seq=n，`告诉客户端现在可以真正的断开连接`了，此时服务端状态由 CLOSE_WAIT 变为 `LAST_ACK`；
+
+- 第四次挥手，客户端收到服务端再次发送的含 FIN=1 标志位的数据包，就知道服务端处理好了可以断开连接了，但是`客户端为了慎重起见，不会立马关闭连接，而是改状态`，且向服务端发送含 ACK=1 标志位的应答数据包，确认序列号 ack=n+1，此时客户端状态由 FIN_WAIT_2 变为 `TIME_WAIT`；
+
+- `等待 2 个MSL时间还是未收到服务端发过来的数据，则表明服务端已经关闭连接了，客户端也会关闭连接释放资源`，此时客户端状态由 TIME_WAIT 变为 CLOSED；
+
+> `SYN 洪水攻击（SYN Flood）`：是一种 DoS攻击（拒绝服务攻击），大概`原理是伪造大量的TCP请求，服务端收到大量的第一次握手的数据包，且都会发第二次握手数据包去回应，但是因为 IP 是伪造的，一直都不会有第三次握手数据包，导致服务端存在大量的半连接`，即 SYN_RCVD 状态的连接，导致半连接队列被塞满，且服务端默认会发 5 个第二次握手数据包，耗费大量 CPU 和内存资源，使得正常的连接请求进不来；
+
+
+
+##### 为什么要“三次握手，四次挥手”
+> 客户端和服务端通信前要进行连接，三次握手的作用就是`双方都能明确自己和对方的收、发能力是正常的`。
+
+##### 为什么建立连接是三次握手，而关闭连接却是四次挥手呢？
+> 这是因为服务端在LISTEN状态下，收到建立连接请求的SYN报文后，把ACK和SYN放在一个报文里发送给客户端。而关闭连接时，当收到对方的FIN报文时，仅仅表示对方不再发送数据了但是还能接收数据，`己方是否现在关闭发送数据通道，需要上层应用来决定，因此，己方ACK和FIN一般都会分开发送`。
+
+
+#### HTTPS连接过程
+
+
+#### HTTP版本介绍
+HTTP(Hyper Text Transfer Protocol)即超文本传输协议，是一种用于客户端与服务端进行信息交换的通信协议，特点为：
+- 简单
+- 无状态：http本身是无状态协议，通过Http Cookie实现了有状态的会话
+- 连接：一般基于TCP连接，请求默认端口号是80（HTTPS默认端口号是443）
+
+##### HTTP/0.9 —— 单行协议
+
+已弃用，具体可以参考W3C网站的介绍[HTTP/0.9](https://www.w3.org/Protocols/HTTP/AsImplemented.html)
+
+特点：
+- 请求不包括版本号信息，仅支持`get`请求
+- 协议由单行指令构成：`GET /index.html`
+- 响应无Header及状态码，仅包括HTML文档本身
+
+
+##### HTTP/1.0 —— 构建可扩展性
+特点：
+- 协议版本随GET行发送
+- 支持更多的请求方法：GET、HEAD、POST
+- 引入HTTP头，请求或响应由多行指令构成；包括：Allow/ Authorization/content-type/content-coding/content-length/Date/Expires/From/If-modified-Since/Last-Modified/Location/Pragma/Referer/Server/User-Agent/WWW-Authenticate等
+- 支持更多的资源类型：html、图片、音视频等；
+- 引入状态码
+
+缺点：
+- 默认不提供keepalive，需要显式声明
+- 不支持连接复用：HTTP请求基于TCP连接，HTTP/1.0协议中每次请求均需要建立TCP连接，不可复用；
+- 安全性：是一种无状态协议，身份认证需要通过HTTP Cookie，明文传输数据，因此具有被攻击的危险；
+- 协议开销大：头部信息过大后，每次请求都会携带这些信息；不仅造成带宽浪费，也会增加服务延时；
+- 请求为blocking，即下一个请求的发送必须在收到前一个请求包的响应包后；这些问题造成的一个显著后果是请求延迟大，网络带宽资源不能被充分利用。
+
+
+##### HTTP/1.1 —— 标准化协议
+特点：
+
+- 长连接：`HTTP/1.1默认采用长连接`，即同域名下建立一个TCP连接用于多次通信和数据传输；可以通过`Connection: keep-alive`字段进行指定；是否为长连接可以打开调试控制台查看`connection id`是否一致；
+- 管道化：持久化连接中，可以不用等一个请求被响应后再发送请求，可以连续发送多个请求；当然，服务端的响应顺序是与请求顺序保持一致的；
+- 分块传输编码：支持`Chunked Transfer Coding`，对响应数据进行分块传输，每个`chunk`包含其大小及数据（均为十六进制），size信息独占一行；可以用于动态处理内容的传输；使用头部`Transfer-Encoding: chunked`标识；最后一个chunk仅包含size信息，用于告知数据传输完成；
+- 引入新的缓存机制：`Cache-Control`机制；
+- 内容协商机制：客户端与服务端约定请求的方法、语言、编码类型等信息；使用`Accept`/`Accept-Language`/`Accept-Encoding`等；
+- 更加丰富的请求方法：`OPTIONS`/`GET`/`HEAD`/`POST`/`PUT`/`DELETE`/`TRACE`/`CONNECT`；
+- 新增状态码
+
+HTTP/1.1是目前应用最广泛的版本。引入管道机制一定程度上解决了1.0中请求的blocking问题，但是仍然可能造成队头阻塞，因为服务端的响应是按照请求顺序的；
+
+
+##### HTTP/2 —— quicker、better、faster
+> HTTP/2主要基于SPDY协议，SPDY协议是由google开发的一个应用层协议，可以说SPDY协议是HTTP/2的前身。HTTP/2强制使用TLS协议，也就是说HTTP/2发送的都是加密的数据，关于强制使用TLS协议这一点引起了很多争议，因为有些HTTP服务没必要加密，且TLS会引入一定的开销，特别是TLS握手阶段的非对称加密。
+
+特点
+- `头部压缩`：使用`HPACK`算法，减少每次传输不必要的头部信息；它的实质就是一种diff算法；客户端和服务端同时维护一张保存头信息的表，并在每次通信后同步更新；首次请求会保存全部字段；之后只需要传输差别信息即可；
+![avatar](./assets/header_pack.png)
+- `二进制分帧`：HTTP/2.0的每个请求或响应称为消息，每个消息分为一个或多个帧，`采用效率更高的二进制而不是文本格式进行编码传输`；
+- `多路复用`：同域名下建立一个TCP连接，该连接可以用于多个请求的处理；与管道化不同的是每个请求可以单独处理，不会造成HTTP/1.1中的队头阻塞
+- `Server Push`：即客户端请求一个页面后，服务端在未接受到后续请求时就返回响应请求，以及通过页面解析发现的客户端后续可能用到的资源，如图片、css、js等；
+![avatar](./assets/http2_sever_push.png)
+
+##### HTTP/3
+
+http/3.0以`UDP`而不是`TCP`作为传输协议，UDP不提供可靠和流控服务，所以还需要另外另外一个协议——QUIC。QUIC工作在应用层，位于UDP和HTTP之间。
+
+![avatar](./assets/http3_vs_http2.jpg)
+
+HTTP因为不使用TCP，所以解决了TCP的队头阻塞问题，完整得解决了队头阻塞问题。
+
+- HTTP/3不再需要TCP三次握手，相比HTTP/2进一步降低了请求延迟；
+- `解决了连接迁移问题`：以前使用TCP作为传输层协议时，移动网络从4G切换到wifi，因为涉及到IP改变，所以需要重新建立连接，而HTTP/3使用CID（connection id）来标识一条流，改变IP并不会造成影响。
+
+### 预加载
+在preload和prefetch之前，我们一般根据编码需求通过link或者script标签引入页面渲染和交互所依赖的js和css等；然后这些资源由浏览器决定优先级进行加载、解析、渲染等。
+
+> preload和prefetch的出现为我们提供了可以更加细粒度地控制浏览器加载资源的方法。
+
+> Chrome有四种缓存：http cache、memory cache、Service Worker cache和Push
+cache。在`preload或prefetch的资源加载时，两者均存储在http
+cache`。当资源加载完成后，如果资源是可以被缓存的，那么其被存储在http
+cache中等待后续使用；`如果资源不可被缓存，那么其在被使用前均存储在memory cache`；
+
+#### preload
+link标签的preload是一种声明式的资源获取请求方式，用于提前加载一些需要的依赖，并且`不会影响页面的onload`事件；使用方式如下：
+```html
+<link rel="preload" as="script" href="test.js" onload="handleOnload()" onerror="handlepreloadError()">
+<link rel="preload" as="style" href="test.css" onload="this.rel=stylesheet"> // css加载后立即生效
+```
+
+其中，`rel`属性值为preload；`as`属性用于规定资源的类型，并根`据资源类型设置Accep请求头`，以便能够使用正常的策略去请求对应的资源；`href`为资源请求地址；`onload`和`onerror`则分别是资源加载成功和失败后的回调函数；
+
+其中as的值可以取`style、script、image、font、fetch、document、audio、video`等；
+
+> 如果as属性被省略，那么该请求将会当做异步请求处理
+
+另外，在`请求跨域资源时推荐加上crossorigin属性`，否则可能会导致资源的二次加载（尤其是font资源）；
+```html
+<link rel="preload" as="font" href="www.font.com" crossorigin="anonymous">
+<link rel="preload" as="font" href="www.font.com" crossorigin="use-credentials">
+```
+
+##### preload特点
+- preload加载的资源是在浏览器渲染机制之前进行处理的，并且不会阻塞onload事件；
+- preload可以支持加载多种类型的资源，并且可以加载跨域资源；
+- `preload加载的js脚本其加载和执行的过程是分离`的。即preload会预加载相应的脚本代码，待到需要时自行调用；
+
+
+#### prefetch
+prefetch是一种`利用浏览器的空闲时间加载页面将来可能用到的资源`的一种机制；通常`可以用于加载非首页的其他页面所需要的资源`，以便加快后续页面的首屏速度；
+
+##### prefetch特点
+prefetch加载的资源`可以获取非当前页面所需要的资源`，并且将其放入缓存至少5分钟（`无论资源是否可以缓存`）；并且，当页面跳转时，未完成的prefetch请求不会被中断；
+
+##### 属性支持度检测
+```js
+const preloadSupported = () => {
+    const link = document.createElement('link');
+    const relList = link.relList;
+    if (!relList || relList.supports)
+        return false;
+    return relList.supports('preload');
+}
+```
+
+
+### 预渲染
+
+> With prerendering, the content is prefetched and then rendered in the background by the browser as if the content had been rendered into an invisible separate tab. When the user navigates to the prerendered content, the current content is replaced by the prerendered content instantly.
+
+使用预渲染时，对应资源会被`prefetch`，然后在浏览器后台进行渲染。当用户浏览到预渲染的内容时，当前内容就会被预渲染内容立即代替。可以使用以下代码开启预渲染
+
+```js
+<link rel="prerender" href="http://example.com" />
+```
+
+预渲染虽然可以提高页面的加载速度，但是要确保该页面百分百会被用户在之后打开，否则就白白浪费资源去渲染
+
+
+
+### 缓存
+缓存对于前端性能优化来说是个很重要的点，良好的缓存策略可以降低资源的重复加载提高网页的整体加载速度。
+
+
+
+#### Pragma
+Pragma是`HTTP1.0`中定义的通用首部字段，与HTTP1.0中的`Expires`标头共同决定HTTP1.0中的缓存策略；`Pragma: no-cache`作用与`Cache-Control: no-cache`作用一致；`现在通常用与对HTTP1.0客户端的兼容`；
+
+
+#### Expires
+Expires是HTTP1.0及HTTP1.1都有的`响应头部字段`，表`示启用缓存并设置资源过期的时间点，包含日期、时间`；设置过去的时间则表示资源过期；同时设置Pragma和Expires则不缓存；这里需要注意的是服务器时间和本地时间的统一问题，否则可能导致合法的资源被当做过期处理，在项目中已采坑。。
+
+```js
+// 示例
+Expires: Wed, 21 Oct 2015 07:28:00 GMT
+```
+
+> 如果响应头部中包含Cache-Control：max-age或Cache-Control：s-max-age字段，则Expires字段会被忽略；
+
+
+```
+Response Headers
+access-control-allow-origin: *
+cache-control: max-age=604800
+content-encoding: gzip
+content-md5: JZeM8QtTaNUNZtAn96xplQ==
+content-type: text/css; charset=utf-8
+date: Thu, 01 Sep 2022 13:16:39 GMT
+expires: Tue, 26 Jul 2022 20:33:04 GMT
+last-modified: Mon, 27 Aug 2018 07:13:39 GMT
+server: AliyunOSS
+vary: Accept-Encoding
+x-oss-hash-crc64ecma: 14495222281733060606
+x-oss-object-type: Normal
+x-oss-request-id: 624326AF1567603531317BBA
+x-oss-server-time: 18
+x-oss-storage-class: Standard
+x-ser: BC202_dx-lt-yd-jiangsu-taizhou-4-cache-11, BC9_yd-shan3xi-shangluo-2-cache-1
+
+Request Headers
+:authority: csdnimg.cn
+:method: GET
+:path: /public/sandalstrap/1.4/css/sandalstrap.min.css
+:scheme: https
+accept: text/css,*/*;q=0.1
+accept-encoding: gzip, deflate, br
+accept-language: zh-CN,zh;q=0.9
+cache-control: no-cache
+pragma: no-cache
+referer: https://blog.csdn.net/luofeng457/article/details/90373977?ops_request_misc=%257B%2522request%255Fid%2522%253A%2522166203531816781667812271%2522%252C%2522scm%2522%253A%252220140713.130102334.pc%255Fblog.%2522%257D&request_id=166203531816781667812271&biz_id=0&utm_medium=distribute.pc_search_result.none-task-blog-2~blog~first_rank_ecpm_v1~rank_v31_ecpm-1-90373977-null-null.nonecase&utm_term=%E5%8D%8F%E5%95%86%E7%BC%93%E5%AD%98&spm=1018.2226.3001.4450
+sec-ch-ua: ".Not/A)Brand";v="99", "Google Chrome";v="103", "Chromium";v="103"
+sec-ch-ua-mobile: ?0
+sec-ch-ua-platform: "Windows"
+sec-fetch-dest: style
+sec-fetch-mode: no-cors
+sec-fetch-site: cross-site
+user-agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/103.0.0.0 Safari/537.36
+```
+#### Cache-Control
+`Cache-Control是HTTP1.1中引入的一种通用头部字段，可以用于请求和响应头部`；现代浏览器都支持Cache-Control，主要`用于替代HTTP1.0中定义的一些相应缓存标头，如Expires、Pragma`等；客户端和服务端的请求头有一些差异：
+
+|指令|客户端|服务端|
+|-|-|-|
+|no-cache|√|√|
+|no-store|√|√|
+|max-age=<seconds>|√|√|
+|no-transform|√|√|
+|public|×|√|
+|private|×|√|
+|max-stale|√|×|
+|only-if-cached|√|×|
+|must-revalidate|×|√|
+|proxy-revalidate|×|√|
+|s-maxage=<seconds>|×|√|
+
+
+`max-age: <seconds>`：从请求时间开始计算的缓存存储的最大有效时长，单位为秒；超过则为过期；
+
+`max-stale[=<seconds>]`：客户端标头，表示客户端可以接受一个过期资源；如果设置了可选的时间参数，则表示过期时间不超过该时长；
+
+`must-revalidate`：服务端标头，使用缓存前需要验证旧资源的状态，过期资源不可用；
+
+##### demo
+```js
+// 禁止缓存
+Cache-Control: no-store
+
+// 缓存静态文件
+Cache-Control: public, max-age=31536000
+
+// 需要重新验证
+Cache-Control: no-cache // 或
+Cache-Control: max-age=0, must-revalidate
+
+// 对于频繁变动的资源，可以使用 Cache-Control: no-cache 并配合 ETag 使用，表示该资源已被缓存，但是每次都会发送请求询问资源是否更新。
+
+```
+
+##### `no-cache`和`no-store`：
+`no-store`禁止浏览器及所有的中间件（代理服务器等）缓存任何版本的响应信息，`即我们通常所说的不缓存`，每次请求都需要向服务器发送完整地请求并下载相应的响应；
+
+`no-cache不直接使用缓存，需要先在与服务器确认返回的响应是否发生变化`。即如果存在ETag（如ETag: af47a1d）等验证令牌时，会发送请求（请求带着If-None-Match: af47a1d标头）到服务器检验之前的缓存内容和当前版本有无变化，如果无变化则返回响应状态码304，否则重新请求并下载资源；(`协商缓存验证`)
+
+##### public与private
+- `private`：响应仅对单个用户进行缓存，也就是说对于代理服务器、CDN等中间缓存机构不进行缓存；
+- `public`：非必须项，表示响应在多数情况下均可以被缓存（包括CDN、代理服务器等）；
+
+
+下图是MDN推荐的最佳Cache-Control策略：
+![avatar](./assets/cache-control.png)
+
+
+
+
+#### 强制缓存与协商缓存
+
+通常浏览器缓存策略分为两种：`强缓存`和`协商缓存`
+
+- 强缓存: 由`expires`与`cache-control: max-age`控制；表示在缓存有效期内不需要重新请求服务端资源，返回的状态码为200
+
+- 协商缓存：由`ETags`与`If-No-Match`、`Last-Modified`与`If-Modified-Since`控制；在`缓存过期时，会用到协商缓存`；协商缓存需要向浏览器发送请求，以确认当前过期的资源是否发生过更新，如果没有更新，即缓存有效则返回304；否则重新获取资源；
+
+
+#### 缓存校验机制
+
+如果由于服务器时间精度问题；或者如果设置的缓存时间已经过期，并且服务端资源并未发生更新，仅使用max-age等类似的缓存过期判断策略，会重新下载整个并未发生变化的资源，这会造成带宽浪费与服务器负载压力；
+
+##### Last-Modified与If-Modified-Since
+
+1. `Last-Modified`：响应头部字段；表示服务器端资源上次修改的日期和时间，通常与请求字段If-Modified-Since搭配使用；其`精度低于ETag，故常作为备用机制`；
+
+    ```js
+    // 用法
+    Last-Modified: <day-name>, <day> <month> <year> <hour>:<minute>:<second> GMT
+
+    // 示例
+    Last-Modified: Wed, 20 May 2019 11:11:11 GMT
+    ```
+
+2. `If-Modified-Since`：请求字段（GET/HEAD方式），如果请求的资源在给定时间后未被修改，那么返回一个不带响应主体的304响应；否则是一个200的请求；同样，`如果同时设置了If-None-Match，If-Modified-Since也会被忽略`；
+
+    ```js
+    // 示例
+    If-Modified-Since: Wed, 20 May 2019 11:11:11 GMT
+    ```
+
+
+##### ETag与If-None-Match
+
+Last-Modified的精度与服务器的时间精度有关，无法识别一秒内进行多次修改的情况，也就是说资源的修改时间有可能存在一定偏差，而ETag可以精确标识资源的改动；另外，如果资源修改而其内容未发生变化（修改后再恢复）的情况下还是会重新加载资源；
+
+`ETag相当于资源的摘要，值是一段ASCII码组成的字符串，仅在其内容发生变化时对应的ETag值才会改变`；这样就可以避免Last-Modified中资源被修改而内容未发生变化的状况了；`ETag的生成方式不唯一`；
+
+服务器响应资源请求时，可以在响应头部加上ETag指令，如ETag: "33a64df551425fcc55e4d42a148795d9f25f89d4"，客户端可以选择是否缓存该资源及标识并且在下次请求该资源时在请求头中加入一个If-None-Match: "33a64df551425fcc55e4d42a148795d9f25f89d4"的头部字段；服务器将当前版本的ETag与客户端的ETag字段值进行比较，如果两者保持一致则表示资源未被更改，返回304；
+
+需要注意的是，上边已经提到了ETag生成的方式不唯一，可以通过hash散列或者其他算法获得；因此在使用CDN或者其他分布式服务器系统时，需要保障ETag的唯一性，从而避免不必要的资源请求；当然，计算ETag对服务器性能也有一定的影响；
+
+`W/为可选参数，用于标识是否为弱校验`；ETag支持强校验和弱校验：`强校验需要资源每个字节都对应相同，包括Content-Type、Content-Encoding`等；弱校验仅需二者在语义上相同，即可以使用不同的Content-Type值等，尤其是在动态生成内容上弱校验更能发挥作用；
+
+```js
+// 示例
+ETag: "33a64df551425fcc55e4d42a148795d9f25f89d4"
+ETag: W/"0815"
+
+If-None-Match: "33a64df551425fcc55e4d42a148795d9f25f89d4"
+```
+
+#### F5与Ctrl+F5
+
+`Ctrl+F5`：会强制不用所有缓存并全部向服务器发送新的请求，请求头中移除了If-Modified-Since及If-none-Match标头，并且加入Cache-Control: no-cache及Pragma: no-cache；
+
+`F5`：F5则会加入请求头If-Modified-Since、If-none-Match及Cache-Control: max-age=0请求头以有效使用缓存；
+
+![avatar](./assets/cache-control-pyramid.png)
+
+结合上图，为了更高效地利用HTTP缓存，应当尽量为可缓存资源设置Expires/Cache-Control及ETag/Last-Modified标头，这样可以能减少304请求造成的性能开销，同时能在资源更新的时候尽可能早的获取新版本的资源，从而使用户体验更好；现在，使用webpack构建项目时，通常会将静态资源的文件名后缀加上md5等，这样可以在资源有新版本时直接更新资源，减少304的开销；
+
+
+
+
+
+
+
+
+
+## 优化渲染过程
+
+## 文件优化
+
+## 其他
 
 
 
@@ -2807,3 +3254,10 @@ self.addEventListener('fetch', e => {
 10. [跨域请求小结](https://blog.csdn.net/luofeng457/article/details/90478106)
 11. [关于 async 函数的理解](https://juejin.cn/post/6844903735290757133)
 12. [Service Worker简介](https://blog.csdn.net/luofeng457/article/details/102847261)
+13. [HTTP各版本简介](https://blog.csdn.net/luofeng457/article/details/102858302)
+14. [An overview of HTTP](https://developer.mozilla.org/en-US/docs/Web/HTTP/Overview)
+15. [TCP 连接详解](https://zhuanlan.zhihu.com/p/406247432)
+
+
+
+
