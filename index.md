@@ -3281,16 +3281,126 @@ If-None-Match: "33a64df551425fcc55e4d42a148795d9f25f89d4"
 
 
 
-
-
-
-
-
 ## 优化渲染过程
+### 懒加载
+懒加载就是将非关键的资源延后加载。
+
+懒加载的原理就是只加载自定义区域（通常是可视区域，但也可以是即将进入可视区域）内需要加载的东西。对于图片来说，先设置图片标签的 src 属性为一张占位图，将真实的图片资源放入一个自定义属性中，当进入自定义区域时，就将自定义属性替换为 src 属性，这样图片就会去下载资源，实现了图片懒加载。
+
+懒加载不仅可以用于图片，也可以使用在别的资源上。比如进入可视区域才开始播放视频等等。
+
+### 懒执行
+懒执行就是`将某些逻辑延迟到使用时再计算`。`该技术可以用于首屏优化`，对于某些耗时逻辑并不需要在首屏就使用的，就可以使用懒执行。懒执行需要唤醒，一般可以通过定时器或者事件的调用来唤醒。
+
 
 ## 文件优化
+### 图片优化
+#### 计算图片大小
+对于一张 100 _ 100 像素的图片来说，图像上有 10000 个像素点，如果每个像素的值是 RGBA 存储的话，那么也就是说每个像素有 4 个通道，每个通道 1 个字节（8 位 = 1 个字节），所以该图片大小大概为 39KB（10000 _ 1 * 4 / 1024）。
+
+但是在实际项目中，一张图片可能并不需要使用那么多颜色去显示，我们可以通过减少每个像素的调色板来相应缩小图片的大小。
+
+了解了如何计算图片大小的知识，那么对于如何优化图片，想必大家已经有 2 个思路了：
+- 减少像素点
+- 减少每个像素点能够显示的颜色 
+
+
+#### 图片加载优化
+
+- 非必要可以使用CSS替代：很多时候会使用到很多修饰类图片，其实这类修饰图片完全可以用 CSS 去代替
+- 合适的尺寸：对于移动端来说，屏幕宽度就那么点，完全没有必要去加载原图浪费带宽。一般图片都用 CDN 加载，可以计算出适配屏幕的宽度，然后去请求相应裁剪好的图片
+- 小图使用 `base64` 格式
+- 将多个图标文件整合到一张图片中（雪碧图）
+- 选择正确的图片格式：
+    - 支持webp的情况下`优先使用webp`，同等质量的前提下具有更高的压缩比，但有一定的兼容性问题
+    - 小图使用 PNG，
+    - 一般图片使用JPEG，有透明区域的图片使用PNG
+### 其他文件优化
+- CSS 文件放在 head 中
+- 服务端开启文件压缩功能（请求头`Accept-Encoding: gzip, deflate, br`，响应头`Content-Encoding: br`）
+- 将 script 标签放在 body 底部，因为 JS 文件执行会阻塞渲染。当然也可以把 script 标签放在任意位置然后加上 `defer ，表示该文件会并行下载，但是会放到 HTML 解析完成后顺序执行`。对于没有任何依赖的 JS 文件可以加上 `async ，表示加载和渲染后续文档元素的过程将和 JS 文件的加载与执行并行无序进行`。
+- 执行 JS 代码过长会卡住渲染，对于`需要很多时间计算的代码可以考虑使用 Webworker`。Webworker 可以让我们另开一个线程执行脚本而不影响渲染
+
+
+
+### CDN
+
+静态资源尽量使用 CDN 加载，由于浏览器对于单个域名有并发请求上限，可以考虑使用多个 CDN 域名。对于 `CDN 加载静态资源需要注意 CDN 域名要与主站不同，否则每次请求都会带上主站的 Cookie`
 
 ## 其他
+
+### webpack优化
+- 对于 Webpack4，打包项目使用 `production 模式`，这样会自动开启代码压缩
+- 使用 ES6 模块来开启 `tree shaking`，这个技术可以`移除没有使用的代码`
+- 优化图片，对于小图可以使用 base64 的方式写入文件中
+- 按照路由拆分代码，实现`按需加载`
+- 给打包出来的文件名添加哈希，实现`浏览器缓存`文件
+
+### 监控
+对于代码运行错误，通常的办法是使用 window.onerror 拦截报错。该方法能拦截到大部分的详细报错信息，但是也有例外
+
+- 对于`跨域的代码运行错误会显示 Script error`. 对于这种情况我们需要给 script 标签添加 `crossorigin` 属性
+- 对于某些浏览器可能不会显示调用栈信息，这种情况可以通过 `arguments.callee.caller` 来做栈递归
+
+对于`异步代码`来说，可以使用 `catch` 的方式捕获错误。比如 Promise 可以直接使用 catch 函数，async await 可以使用 try catch
+
+但是要注意线上运行的代码都是压缩过的，需要在打包时生成 sourceMap 文件便于 debug
+
+对于捕获的错误需要上传给服务器，通常可以通过 img 标签的 src 发起一个请求
+
+
+### 面试题
+
+如何渲染几万条数据并不卡住界面
+
+这道题考察了如何在不卡住页面的情况下渲染数据，也就是说不能一次性将几万条都渲染出来，而应该一次渲染部分 DOM，那么就可以通过 `requestAnimationFrame`来每16 ms刷新一次
+
+```html
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta http-equiv="X-UA-Compatible" content="ie=edge" />
+    <title>Document</title>
+  </head>
+  <body>
+    <ul>
+      控件
+    </ul>
+    <script>
+      setTimeout(() => {
+        // 插入十万条数据
+        const total = 100000
+        // 一次插入 20 条，如果觉得性能不好就减少
+        const once = 20
+        // 渲染数据总共需要几次
+        const loopCount = total / once
+        let countOfRender = 0
+        let ul = document.querySelector('ul')
+        function add() {
+          // 优化性能，插入不会造成回流
+          const fragment = document.createDocumentFragment()
+          for (let i = 0; i < once; i++) {
+            const li = document.createElement('li')
+            li.innerText = Math.floor(Math.random() * total)
+            fragment.appendChild(li)
+          }
+          ul.appendChild(fragment)
+          countOfRender += 1
+          loop()
+        }
+        function loop() {
+          if (countOfRender < loopCount) {
+            window.requestAnimationFrame(add)
+          }
+        }
+        loop()
+      }, 0)
+    </script>
+  </body>
+</html>
+```
 
 
 
