@@ -3404,13 +3404,229 @@ If-None-Match: "33a64df551425fcc55e4d42a148795d9f25f89d4"
 
 
 
+# 安全
+## XSS
+XSS（Cross-Origin Script），跨站脚本攻击是一种常见的网站安全漏洞攻击，是代码注入的一种。它允许`恶意使用者将程式码注入到网页上，其他使用者在观看网页时就会受到影响`。这类攻击通常包含了 HTML 以及使。
+
+XSS一般分为存储型、反射型、DOM-Based
+
+### 分类
+
+> 从XSS漏洞利用的角度来看，存储型XSS对攻击者的用处比反射型要大。因为存储型XSS在用户访问正常URL时会自动触发；而反射型XSS会修改一个正常的URL，一般要求攻击者将XSS URL发送给用户点击，无形中提高了攻击的门槛。
+
+#### 存储型
+
+存储型XSS攻击指的是`恶意代码被当做正常数据插入到服务器上的数据库中`，当用户正常访问页面的时候，恶意代码从数据库中提取出来并被触发。
+
+> 例如一个留言板被黑客利用进行XSS攻击，提交了形如`<script>alert(“please follow serendipity！”)</script>`的代码，那么所有访问这个留言板的用户都将可能执行这段恶意脚本。
+
+存储型XSS可实现`劫持访问`，盗取访问者`cookie`或者配合csrf攻击完成`恶意请求`等攻击
+
+#### 反射型
+
+> 反射型XSS只是简单得把用户输入的数据“反射”给浏览器，是非持久化的。通常需要`欺骗用户自己去点击带有特定参数的XSS代码链接`才能触发，一般是欺骗用户点击特定链接来进行恶意攻击，`攻击代码就在url当中`
+
+```
+// 正常代码
+http://www.dvwa.com/vulnerabilities/xss_r/?name=index
+
+// 恶意弹窗
+http://www.dvwa.com/vulnerabilities/xss_r/?name=<script>alert(Serendipity)</script>
+
+// cookie劫持
+http://www.dvwa.com/vulnerabilities/xss_r/?name=<script>alert(document.cookie)</script>
+
+
+```
+
+
+#### DOM-Based
+
+DOM-Based XSS并非按照“数据是否保存在服务端”来划分，DOM-Based XSS从效果上来说也是反射型XSS。单独划分出来是因为其特殊的形成原因，发现它的专家专门提出了该类型的XSS。
+
+DOM-Based XSS`通过恶意脚本修改页面的DOM节点来发起攻击，是发生在前端的攻击`。DOM型XSS的特殊之处在于，用户的输入经过了DOM操作，特别是在innerHTML、ajax中经常出现。
+
+![avatar](./assets/DOM-Based-XSS.png)
+
+
+### XSS攻击平台
+- [Attack API](https://code.google.com/p/attackapi)
+
+- BeEF
+
+- XSS-Proxy
+
+
+### XSS Worm
+
+> 一般来说，用户之间发生交互行为的页面，如果存在存储型XSS，则比较容易发起XSS Worm攻击。
+- Samy Worm
+- 百度空间蠕虫
+
+
+### 如何攻击
+XSS `通过修改 HTML 节点`或者`执行 JS 代码`来攻击网站
+
+### 如何防御
+
+
+#### HttpOnly
+
+> JavaScript Document.cookie API `无法访问带有 HttpOnly 属性的 cookie`；`此类 Cookie 仅作用于服务器`
+
+```
+Set-Cookie: id=a3fWa; Expires=Wed, 21 Oct 2015 07:28:00 GMT; Secure; HttpOnly
+```
+
+#### CSP
+
+> 内容安全策略 (CSP) 是一个额外的安全层，用于检测并削弱某些特定类型的攻击，包括跨站脚本 (XSS) 和数据注入攻击等。无论是数据盗取、网站内容污染还是散发恶意软件，这些攻击都是主要的手段。
+
+CSP 本质上也是建立白名单，规定了浏览器只能够执行特定来源的代码
+
+可以通过设置 `Content-Security-Policy` HTTP头部来开启 CSP
+
+```
+// 所有内容均来自站点的同一个源 (不包括其子域名)
+Content-Security-Policy: default-src 'self'
+
+// 允许内容来自信任的域名及其子域名 (域名不必须与 CSP 设置所在的域名相同)
+Content-Security-Policy: default-src 'self' *.trusted.com
+
+// 限制媒体文件和脚本的来源
+Content-Security-Policy: default-src 'self'; img-src *; media-src media1.com media2.com; script-src userscripts.example.com
+
+
+
+```
+
+#### 输入检查
+
+一般检查用户输入的数据中是否包含一些特殊字符，如`<`、`>`、`'`、`"`等；输入检查很多时候也被用于格式检查。有些检查会匹配XSS的特征，会查找`javascript`、`<script>`等敏感字符，这种输入检查的方式称为`XSS Filter`。
+
+> `输入检查的逻辑，必须放在服务端代码中实现`。如果只是在客户端使用JavaScript进行输入检查，是很容易被攻击者绕过的。
+
+
+#### 输出检查
+
+除富文本内容特殊处理外，一般需要进行`编码`或者`转义`处理来防御XSS攻击
+
+#### 处理富文本
+需要区分富文本和有攻击性的XSS。过滤富文本时，`事件`应该被严格禁止，`<iframe>`、`<script>`、`<form>`等一些危险的标签也应该被禁止；标签选择上可以通过白名单机制只允许部分安全的标签存在；
+
+#### DOM-Based XSS防御
+
+会触发DOM-Based XSS的地方很多，以下几个是JavaScript输出变量到HTML页面的必经之路
+- document.write
+- innerHTML
+- location.replace()
+- window.attachEvent
+需要注意这些函数的参数是否可以被用户控制
+
+除了服务端直接输出变量到JavaScript外，以下也会导致DOM-Based XSS攻击
+
+- window.name
+- document.cookie
+- localStorage
 
 
 
 
 
+## CSRF
+
+Cross-Site Request Forgery，跨站请求伪造
+
+> 跨站请求伪造（CSRF）是一种`冒充受信任用户`，向服务器发送`非预期请求`的攻击方式
+
+简单点说，CSRF 就是利用用户的登录态发起恶意请求
+
+XSS 利用的是用户对指定网站的信任，CSRF 利用的是网站对用户网页浏览器的信任。
+
+### 如何攻击
+假设网站中有一个通过 Get 请求提交用户评论的接口，那么攻击者就可以在钓鱼网站中加入一个图片，图片的地址就是评论接口
+```js
+<img src="http://www.domain.com/xxx?comment='attack'" />
+```
+
+如果接口是 Post 提交的，就相对麻烦点，需要用表单来提交接口
+```html
+<form action='http://www.domain.com/xxx' method='post' id='csrf'>
+    <input name='comment' value='attack' type='hidden'>
+</form>
+```
+
+### 如何防御
+1. Get请求不对数据进行修改
+2. 不让第三方网站访问用户cookie
+3. 阻止第三方网站请求接口
+4. 请求时附带验证信息，比如验证码或`token`
+
+#### SameSite
+
+> 可以对 Cookie 设置 SameSite 属性。该属性设置 Cookie 不随着跨域请求发送，该属性可以很大程度减少 CSRF 的攻击，但是该属性目前并不是所有浏览器都兼容。
+
+- Strict：完全禁止第三方cookie，跨站点时任何情况下都不会发送cookie。`这个规则过于严格，可能造成非常不好的用户体验`。比如，当前网页有一个 GitHub 链接，用户点击跳转就不会带有 GitHub 的 Cookie，`跳转过去总是未登陆状态`。
+- Lax：Lax规则稍稍放宽，大多数情况也是不发送第三方 Cookie，但是`导航到目标网址的 Get 请求除外`;
+- None：关闭`SameSite`属性，不过需要同时设置`Secure`属性，否则不生效；
+
+```
+Set-Cookie: CookieName=CookieValue; SameSite=Strict;
+
+Set-Cookie: key=value; SameSite=None; Secure
+```
+
+#### 验证Referer
+
+对于需要防范 CSRF 的请求，我们可以通过验证 Referer 来判断该请求是否为第三方网站发起的。
+
+> Referer 请求头包含了当前请求页面的来源页面的地址，即表示当前页面是通过此来源页面里的链接进入的。服务端一般使用 Referer 请求头识别访问来源，可能会以此进行统计分析、日志记录以及缓存优化等。
+
+#### Token
+
+服务器下发一个随机 Token（算法不能复杂），每次发起请求时将 Token 携带上，服务器验证 Token 是否有效。
 
 
+## 密码安全
+
+密码安全虽然大多是后端的事情，但是作为一名优秀的前端程序员也需要熟悉这方面的知识。
+
+### 加盐
+
+对于密码存储来说，必然是不能明文存储在数据库中的，否则一旦数据库泄露，会对用户造成很大的损失。并且不建议只对密码单纯通过加密算法加密，因为存在彩虹表的关系
+
+> 加盐也就是给原密码添加字符串，增加原密码长度
+
+`通常需要对密码加盐，然后进行几次不同加密算法的加密`。
+
+```
+// 加盐也就是给原密码添加字符串，增加原密码长度
+sha256(sha1(md5(salt + password + salt)))
+```
+
+> 但是加盐并不能阻止别人盗取账号，只能确保即使数据库泄露，也不会暴露用户的真实密码。一旦攻击者得到了用户的账号，可以通过暴力破解的方式破解密码。对于这种情况，通常使用验证码增加延时或者限制尝试次数的方式。并且一旦用户输入了错误的密码，也不能直接提示用户输错密码，而应该提示账号或密码错误。
+
+
+### 对称密码
+比较典型的如`AES` ，它是指在加密和解密的过程中使用同一个 密钥 的处理这个过程。我们知道，目前在中国大陆的Web世界中（不仅是Web也包括App），二维码的流行程度几乎很多场景里都有使用，这种不经过网络的直接获取数据，非常适合使用这种对称加密/解密的方式来传输数据，前端这边会使用 `crypto-js` 来处理 AES
+
+### 非对称密码
+RSA
+
+### 单向散列函数
+单向散列函数就是为了计算散列值而准备的函数，比较典型的有我们下载任何软件包时同时会校验一下MD5值来防止下载的软件包是一个被篡改的软件包。`crypto-js` 包中不仅提供了 `md5`，`hmac` 也有 `sha256`
+
+```js
+import * as CryptoJS from "crypto-js";
+
+const sha256 = CryptoJS.algo.SHA256.create();
+
+sha256.update("Message Part 1");
+sha256.update("Message Part 2");
+sha256.update("Message Part 3"); 
+
+const hash = sha256.finalize();
+```
 
 
 
@@ -3435,6 +3651,7 @@ If-None-Match: "33a64df551425fcc55e4d42a148795d9f25f89d4"
 15. [TCP 连接详解](https://zhuanlan.zhihu.com/p/406247432)
 16. [十分钟搞懂HTTP和HTTPS协议？](https://zhuanlan.zhihu.com/p/72616216)
 17. [HTTPS为什么安全 &分析 HTTPS 连接建立全过程](https://wetest.qq.com/labs/110)
+18. [白帽子讲web安全](https://pan.baidu.com/disk/main?from=homeFlow#/index?category=all&path=%2F%E7%BD%91%E7%AB%99%E5%88%B6%E4%BD%9C%2Fbook)
 
 
 
