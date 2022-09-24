@@ -3406,9 +3406,11 @@ If-None-Match: "33a64df551425fcc55e4d42a148795d9f25f89d4"
 
 # 安全
 ## XSS
-XSS（Cross-Origin Script），跨站脚本攻击是一种常见的网站安全漏洞攻击，是代码注入的一种。它允许`恶意使用者将程式码注入到网页上，其他使用者在观看网页时就会受到影响`。这类攻击通常包含了 HTML 以及使。
+XSS（Cross-Origin Script），跨站脚本攻击是一种常见的网站安全漏洞攻击，是代码注入的一种。它允许`恶意使用者将程式码注入到网页上，其他使用者在观看网页时就会受到影响`。这类攻击通常包含了 HTML 以及客户端脚本语言。
 
 XSS一般分为存储型、反射型、DOM-Based
+
+> XSS的本质，在于一部分有心人的恶意代码被当做了正常数据处理，进而导致了一系列安全事件，注入恶意代码，是XSS攻击的特征
 
 ### 分类
 
@@ -3506,6 +3508,18 @@ Content-Security-Policy: default-src 'self'; img-src *; media-src media1.com med
 
 > `输入检查的逻辑，必须放在服务端代码中实现`。如果只是在客户端使用JavaScript进行输入检查，是很容易被攻击者绕过的。
 
+##### HTMLEncode
+某些情况下，不能对用户数据严格过滤，需要对标签进行转换，将字符转换为HTMLEntities
+
+![avatar](./assets/xss-htmlEncode.jpg)
+
+当用户输入`<script>window.location.href=”http://www.baidu.com”;</script>`, 最终保存结果为 &lt;script&gt;window.location.href=&quot;http://www.baidu.com&quot;&lt;/script&gt;, 在展现时，浏览器会对这些字符转换成文本内容，而不是一段可以执行的代码。
+
+##### JavaScriptEncode
+使用“\”对特殊字符进行转义，除数字字母之外，小于127的字符编码使用16进制“\xHH”的方式进行编码，大于用unicode（非常严格模式）。
+
+![avatar](./assets/xss-javascriptEncode.jpg)
+
 
 #### 输出检查
 
@@ -3543,6 +3557,10 @@ Cross-Site Request Forgery，跨站请求伪造
 
 XSS 利用的是用户对指定网站的信任，CSRF 利用的是网站对用户网页浏览器的信任。
 
+> 通常来说 CSRF 是由 XSS 实现的，CSRF 时常也被称为 XSRF（CSRF 实现的方式还可以是直接通过命令行发起请求等）。
+
+> 本质上讲，XSS 是代码注入问题，CSRF 是 HTTP 问题。XSS 是内容没有过滤导致浏览器将攻击者的输入当代码执行。CSRF 则是因为浏览器在发送 HTTP 请求时候自动带上 cookie，而一般网站的 session 都存在 cookie里面。
+
 ### 如何攻击
 假设网站中有一个通过 Get 请求提交用户评论的接口，那么攻击者就可以在钓鱼网站中加入一个图片，图片的地址就是评论接口
 ```js
@@ -3578,7 +3596,7 @@ Set-Cookie: key=value; SameSite=None; Secure
 
 #### 验证Referer
 
-对于需要防范 CSRF 的请求，我们可以通过验证 Referer 来判断该请求是否为第三方网站发起的。
+对于需要防范 `CSRF` 的请求，我们可以通过验证 Referer 来判断该请求是否为第三方网站发起的。
 
 > Referer 请求头包含了当前请求页面的来源页面的地址，即表示当前页面是通过此来源页面里的链接进入的。服务端一般使用 Referer 请求头识别访问来源，可能会以此进行统计分析、日志记录以及缓存优化等。
 
@@ -3629,6 +3647,1631 @@ const hash = sha256.finalize();
 ```
 
 
+---
+
+# 框架通识
+
+## MVC
+![avatar](./assets/MVC.webp)
+
+`Model-View-Controller`，
+
+Model（模型）表示应用程序核心（如数据库）：是应用程序中用于`处理应用程序数据逻辑`的部分
+
+View（视图）显示效果（HTML页面）：通常视图是依据模型数据创建的
+
+- Controller：是应用程序中`处理用户交互`的部分。通常控制器负责从视图读取数据，控制用户输入，并向模型发送数据
+
+### 优点
+- 耦合度低
+- 重用性高
+- 可维护性高
+
+### 缺点
+- 不适合小型，中等规模的应用程序
+- 增加系统结构和实现的复杂性
+- 视图与控制器间的过于紧密的连接
+
+
+
+## MVP
+`Model-View-Presenter`，MVP 是从经典的模式MVC演变而来，它们的基本思想有相通的地方Controller/Presenter负责逻辑的处理，Model提供数据，View负责显示。
+
+![avatar](./assets/MVP.webp)
+
+![avatar](./assets/mvp2.png)
+
+### 优点
+- 模型与视图完全分离，我们可以修改视图而不影响模型；
+- 可以更高效地使用模型，所有的交互都发生在`Presenter`内部；
+- 我们可以`将一个Presenter用于多个视图，而不需要改变Presenter的逻辑`。这个特性非常的有用，因为视图的变化总是比模型的变化频繁；
+- 如果我们把逻辑放在Presenter中，那么我们就可以脱离用户接口来测试这些逻辑（单元测试）
+
+
+
+### 缺点
+
+由于对视图的渲染放在了Presenter中，所以视图和Presenter的交互会过于频繁。还有一点需要明白，`如果Presenter过多地渲染了视图，往往会使得它与特定的视图的联系过于紧密`。一旦视图需要变更，那么Presenter也需要变更了。比如说，原本用来呈现Html的Presenter现在也需要用于呈现Pdf了，那么视图很有可能也需要变更。
+
+> 由于View层和Model层都需要经过Presenter层，导致Presenter层比较复杂，维护起来也会有一定的问题；而且，因为`没有绑定数据，所有数据都需要Presenter层进行“手动同步”，代码量较大`，虽然比起MVC框架好很多，但还是有比较多冗余部分。
+
+
+### MVC对比MVP
+作为一种新的模式，MVP与MVC有着一个重大的区别：`在MVP中View并不直接使用Model`，它们之间的通信是通过Presenter (MVC中的Controller)来进行的，所有的交互都发生在Presenter内部，而在MVC中View会直接从Model中读取数据而不是通过 Controller。
+`在MVC里，View是可以直接访问Model的！从而，View里会包含Model信息，不可避免的还要包括一些业务逻辑`。 在MVC模型里，更关注的Model的改变，而同时有多个对Model的不同显示，即View。所以，在MVC模型里，Model不依赖于View，但是View是依赖于Model的。不仅如此，因为有一些业务逻辑在View里实现了，导致要更改View也是比较困难的，至少那些业务逻辑是无法重用的。
+虽然 MVC 中的 View 的确“可以”访问 Model，但是我们不建议在 View 中依赖 Model，而是要求尽可能把所有业务逻辑都放在 Controller 中处理，而 View 只和 Controller 交互。
+
+
+## MVVM
+
+![avatar](./assets/mvvm.webp)
+
+MVVM（Model-View-ViewModel）本质上是MVC的改进版，由以下三个内容组成：
+- View：界面
+- Model：数据模型
+- ViewModel：作为桥梁负责沟通 View 和 Model
+
+> MVVM就是将其中的View的状态和行为抽象化，让我们将视图 UI 和业务逻辑分开
+
+### MVVM优点
+
+- 低耦合性：视图（View）可以独立于Model变化和修改，一个ViewModel可以绑定到不同的"View"上，当View变化的时候Model可以不变，当Model变化的时候View也可以不变
+- 可重用性：你可以把一些视图逻辑放在一个ViewModel里面，让很多view重用这段视图逻辑
+- 独立开发：开发人员可以专注于业务逻辑和数据的开发（ViewModel），设计人员可以专注于页面设计
+- 可测试
+
+在 JQuery 时期，如果需要刷新 UI 时，需要先取到对应的 DOM 再更新 UI，这样数据和业务的逻辑就和页面有强耦合。
+
+在 MVVM 中，`UI是通过数据驱动的`，数据一旦改变就会相应的刷新对应的 UI，UI如果改变，也会改变对应的数据。这种方式就`可以在业务处理中只关心数据的流转，而无需直接和页面打交道`。
+
+ViewModel 只关心数据和业务的处理，不关心 View 如何处理数据，在这种情况下，View 和 Model 都可以独立出来，任何一方改变了也不一定需要改变另一方，并且可以将一些可复用的逻辑放在一个 ViewModel 中，让多个 View 复用这个 ViewModel。
+
+> 在 MVVM 中，最核心的也就是`数据双向绑定`，例如 Angluar 的脏数据检测，Vue 中的数据劫持。
+
+
+
+
+### MVVM与MVP区别
+
+mvvm模式将Presener改名为View Model，基本上与MVP模式完全一致，`唯一的区别是，它采用双向绑定(data-binding)`: View的变动，自动反映在View Model，反之亦然。这样开发者就不用处理接收事件和View更新的工作，框架已经帮你做好了
+
+
+### 脏数据检查
+众所周知，Angular的双向绑定是采用“脏检测”的方式来更新DOM——Angular对常用的dom事件、xhr事件进行了封装，触发时会调用`$digest cycle`。在$digest流程中，`Angular将遍历每个数据变量的watcher，比较它的新旧值。当新旧值不同时，触发listener函数`，执行相关的操作。
+
+当触发了指定事件后会进入`脏数据检测`，这时会调用 $digest 循环遍历所有的数据观察者，判断当前值是否和先前的值有区别，如果检测到变化的话，会调用 $watch 函数，然后再次调用 $digest 循环直到发现没有变化。循环至少为二次 ，至多为十次。
+
+脏数据检测虽然存在低效的问题，但是不关心数据是通过什么方式改变的，都可以完成任务，但是这在 Vue 中的双向绑定是存在问题的。并且脏数据检测可以实现批量检测出更新的值，再去统一更新 UI，大大减少了操作 DOM 的次数。所以低效也是相对的，这就仁者见仁智者见智了
+
+
+
+### 数据劫持
+
+`Vue`内部使用了`Object.defineProperty()`来实现`双向绑定`，通过这个函数可以监听到 `set` 和 `get` 的事件。
+
+`vue2.x`是基于`Object.defineProperty`实现双向数据绑定的；该函数可以在获取属性值或者设置属性值的时候监听属性的`get`和`set`事件，并进行相关的操作；当然，这些具体的操作就需要通过`发布订阅者模式`作为补充；
+
+`Vue 3.0`是基于`ES6 Proxy`重写了其核心逻辑，代替了原来的Object.defineProperty；优势是：
+
+1. 劫持整个对象并返回一个新对象，而不是像Object.defineProperty需要循环遍历整个对象属性；
+2. 支持监听数组变化；
+3. 支持更加丰富的数据劫持操作；
+
+如模板解析时每遇到一个属性，就为该属性添加一个发布订阅，从而能够进行双向数据绑定；
+
+#### 乞丐版
+
+```js
+function observe(obj) {
+    if (!obj || typeof obj !== 'object') { // 处理类型为null/undefined/非对象
+        return;
+    }
+
+    Object.keys(obj).forEach(key => { // 遍历子属性并进行属性监听；
+        defineReactive(obj, key, obj[key]);
+    })
+}
+
+function defineReactive(obj, key, value) {
+    observe(value); // 递归子属性
+
+    Object.defineProperty(obj, key, {
+        configurable: true,
+        enumberable: true,
+        get() {
+            console.log('get value: ', value);
+            return value;
+        },
+        set(newVal) {
+            console.log('set value: ', newVal);
+            value = newVal;
+        }
+    })
+}
+
+
+var data = {name: 'vue'}
+observe(data);
+data.name // get value: vue
+data.name = 'fn' // set value: fn
+data.name // get value: fn
+```
+
+#### 为属性添加发布订阅模式
+
+![avatar](./assets/data-binding.png)
+
+以上代码简单的实现了如何监听数据的 set 和 get 的事件，但是仅仅如此是不够的，还需要在适当的时候给属性添加发布订阅
+
+在解析`<div>{{name}}</div>`之类的模板时，会给`name`添加发布订阅
+
+```js
+class Dep {
+    constuctor() {
+        this.subs = [];
+    }
+
+    // 添加订阅者
+    addSub(sub) {
+        // sub 是watcher的实例, 每次解析到模板中的属性时，就通过watcher为属性添加订阅并更新视图；
+        this.subs.push(sub);
+    }
+
+    // 通知变化
+    notify() {
+        this.subs.forEach(sub => sub.update()) // 调用Watcher实例方法update更新视图
+    }
+}
+
+// 通过静态属性设置Dep的目标对象
+Dep.target = null;
+
+Class Watcher {
+    constructor(obj, key, cb) {
+        // 将 Dep.target 指向自己
+        // 然后`触发属性的 getter 添加监听`
+        // 最后将 Dep.target 置空
+        Dep.target = this; // 设置Dep通知变化的目标对象
+        this.cb = cb;
+        this.obj = obj; // 待监听对象
+        this.key = key;
+        this.value = obj[key];
+        Dep.target = null;	// 每次为属性添加一个watcher之后解除Dep与Watcher的关联；
+    }
+
+    // 接受变化并更新视图
+    update() {
+        // get new value
+        this.value = this.obj[this.key];
+        // update view
+        this.cb(this.value);
+    }
+}
+
+```
+
+测试：
+```js
+// Watcher的cb函数
+function update(value) {
+    document.querySelector('div').innerText = value
+}
+
+var data= {name: 'vue'};
+observe(data);
+
+new Watcher(data, 'name', update);		// 模拟解析属性name的操作
+
+```
+
+#### 升级版
+
+上边一小节中，我们已经通过`watcher`模拟解析到属性时的操作；但是这个行为是我们手动操作的，并没有与`observe`建立关系让其自动订阅与通知；本节实现此功能；
+
+```js
+function observe(obj) {
+    if (!obj || typeof obj !== 'object') {	// 处理类型为null/undefined/非对象
+        return;
+    }
+    Object.keys(obj).forEach(key => {	// 遍历子属性并进行属性监听；
+        defineReactive(obj, key, obj[key]);
+    })
+}
+
+function defineReactive(obj, key, value) {
+    observe(value); // 递归子属性
+
+    let dep = new Dep();
+    Object.defineProperty(obj, key, {
+        configurable: true,
+        enumerable: true,
+        get() {
+            console.log('get value: ', value);
+            if (Dep.target) {
+                dep.addSub(value); // Dep.target是watcher实例，即订阅者sub
+            }
+            return value;
+        },
+        set(newVal) {
+            console.log('set value: ', value);
+            value = newVal;
+            // 调用watcher的update方法更新视图
+            dep.notify();
+        }
+    })
+}
+
+class Dep {
+    constructor() {
+        this.subs = [];
+    }
+    // 添加订阅者
+    addSub(sub) {
+        // 订阅者sub 是watcher的实例, 每次解析到模板中的属性时，就通过watcher为属性添加订阅并更新视图；
+        this.subs.push(sub);
+    }
+    // 通知变化
+    notify() {
+        this.subs.forEach(sub => {
+            sub.update();
+        })
+    }
+}
+// 通过静态属性设置Dep的目标对象， 建立Dep与Watcher的关系
+Dep.target = null;
+
+class Watcher {
+    constructor(obj, key, cb) {
+        Dep.target = this;	// 设置Dep通知变化的目标对象
+        this.cb = cb;
+        this.obj = obj;		// 待监听对象
+        this.key = key;
+        this.value = obj[key];  // 手动触发属性的get事件
+        Dep.target = null;	// 每次为属性添加一个watcher之后解除Dep与Watcher的关联；
+    }
+    // 接受变化并更新视图
+    update() {
+        // get new value
+        this.value = this.obj[this.key];
+        // update view
+        this.cb(this.value);
+    }
+}
+
+```
+
+
+#### 完整demo
+```html
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+	<meta charset="UTF-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1.0">
+	<meta http-equiv="X-UA-Compatible" content="ie=edge">
+	<title>Vue数据劫持</title>
+	<style>
+		.collapse {
+			color: lightskyblue;
+		}
+		#show {
+			font-size: 30px;
+			color: greenyellow;
+		}
+	</style>
+</head>
+<body>
+	<div class="collapse">
+		<label for="input">Your name: &nbsp;</label>
+		<input type="text" id="input">
+		<div id="show"</div>
+	</div>
+	<script>
+		function observe(obj) {
+			if (!obj || typeof obj !== 'object') {	// 处理类型为null/undefined/非对象
+				return;
+			}
+			Object.keys(obj).forEach(key => {	// 遍历子属性并进行属性监听；
+				defineReactive(obj, key, obj[key]);
+			})
+		}
+
+		function defineReactive(obj, key, value) {
+			observe(value);	// 递归子属性
+			let dep = new Dep();
+			Object.defineProperty(obj, key, {
+				configurable: true,
+				enumerable: true,
+				get() {
+					console.log('get value: ', value);
+					if (Dep.target) {
+						dep.addSub(Dep.target);     // Dep.target是watcher实例
+					}
+					return value;
+				},
+				set(newVal) {
+					console.log('set value: ', newVal);
+					value = newVal;
+					// 调用watcher的update方法更新视图
+					dep.notify();
+				}
+			})
+		}
+
+		class Dep {
+			constructor() {
+				this.subs = [];
+			}
+			// 添加订阅者
+			addSub(sub) {
+				// sub 是watcher的实例, 每次解析到模板中的属性时，就通过watcher为属性添加订阅并更新视图；
+				this.subs.push(sub);
+			}
+			// 通知变化
+			notify() {
+				this.subs.forEach(sub => {
+					sub.update();
+				})
+			}
+		}
+		// 通过静态属性设置Dep的目标对象， 建立Dep与Watcher的关系
+		Dep.target = null;
+
+		class Watcher {
+			constructor(obj, key, cb) {
+				Dep.target = this;	// 设置Dep通知变化的目标对象
+				this.cb = cb;
+				this.obj = obj;		// 待监听对象
+				this.key = key;
+				this.value = obj[key];  // 手动触发属性的get事件
+				Dep.target = null;	// 每次为属性添加一个watcher之后解除Dep与Watcher的关联；
+			}
+			// 接受变化并更新视图
+			update() {
+				// get new value
+				this.value = this.obj[this.key];
+				// update view
+				this.cb(this.value);
+			}
+		}
+
+		function update(value) {
+			document.querySelector('#show').innerText = value
+		}
+
+		var data = { name: 'vue' };
+		observe(data);
+
+		new Watcher(data, 'name', update);
+
+		function handleChange(e) {
+			data.name = e.target.value;
+		}
+		window.onload = function () {
+			let input = document.querySelector('#input');
+			let show = document.querySelector('#show').innerText = data.name;
+			input.addEventListener('change', e => {
+				handleChange(e);
+			})
+		}
+	</script>
+</body>
+</html>
+
+```
+
+
+### Proxy与Object.defineProperty
+
+Object.defineProperty 虽然已经能够实现双向绑定了，但是他还是有缺陷的。
+
+- 只能对属性进行数据劫持，所以需要深度遍历整个对象
+- 对于数组不能监听到数据的变化
+
+虽然 Vue 中确实能检测到数组数据的变化，但是其实是使用了 hack 的办法，并且也是有缺陷的。
+
+> 反观 Proxy 就没以上的问题，原生支持监听数组变化，并且可以直接对整个对象进行拦截，所以 Vue 在`3.x`版本中使用 `Proxy 替换 Object.defineProperty`
+
+> `Proxy` 对象用于创建一个对象的代理，从而`实现基本操作的拦截和自定义`（如属性查找、赋值、枚举、函数调用等）。
+
+```js
+let onWatch = (obj, setBind, getLogger) => {
+    let handler = {
+        get(target, property, receiver) {
+            getLogger(target, property);
+            return Reflect.get(target, property, receiver);
+        },
+        set(target, property, value, receiver) {
+            setBind(value);
+            return Reflect.set(target, property, value);
+        }
+    }
+
+    return new Proxy(obj, handler);
+}
+
+let obj = { a: 1 }
+let value
+let p = onWatch(
+    obj,
+    v => {
+        value = v
+    },
+    (target, property) => {
+    console.log(`Get '${property}' = ${target[property]}`)
+    }
+)
+p.a = 2 // bind `value` to `2`
+p.a // -> Get 'a' = 2
+
+```
+
+
+
+
+## 路由原理
+
+> 前端路由实现起来其实很简单，本质就是监听 URL 的变化，然后匹配路由规则，显示相应的页面，并且无须刷新。
+
+目前单页面使用的路由就只有两种实现方式：
+- hash模式
+- history模式
+
+### hash模式
+
+`www.test.com/##/` 就是 Hash URL，当 `## 后面的哈希值发生变化时，不会向服务器请求数据，可以通过 hashchange 事件来监听到 URL 的变化`，从而进行跳转页面。
+
+![avatar](./assets/router-hash.png)
+
+### history模式
+
+`History` 模式是 `HTML5` 新推出的功能，比之 Hash URL 更加美观
+
+![avatar](./assets/router-history.png)
+
+#### history.pushState()
+
+> history.pushState() 方法向当前浏览器会话的历史堆栈中添加一个状态（state）
+
+```js
+history.pushState(state, title[, url]);
+```
+
+-title: 当前大多数浏览器都忽略此参数，尽管将来可能会使用它。 在此处传递空字符串应该可以防止将来对方法的更改。 或者，您可以为要移动的状态传递简短的标题
+
+-url: 如果是相对的，则相对于当前 URL 进行解析。 新网址必须与当前网址相同 origin； 否则，pushState()将引发异常。 如果未指定此参数，则将其设置为文档的当前 URL。
+
+
+从某种程度上来说，`pushState`与`location = '#foo'`基本一样，会在当前document中创建和激活一个新的历史记录。但`pushState`有以下优势：
+- 新的 URL 可以是任何和当前 URL 同源的 URL。但是设置 window.location 只会在你只设置锚的时候才会使当前的 URL。
+- 非强制修改 URL。相反，设置 window.location = "#foo"; 仅仅会在锚的值不是 #foo 情况下创建一条新的历史记录。
+- `可以在新的历史记录中关联任何数据`。window.location = "#foo"形式的操作，你只可以将所需数据写入锚的字符串中。
+
+> `pushState() 不会造成 hashchange (en-US) 事件调用`，即使新的 URL 和之前的 URL 只是锚的数据不同。
+
+假设 `http://mozilla.org/foo.html` 执行下面的 JavaScript:
+
+```js
+let stateObj = {
+    foo: "bar",
+}
+
+history.pushState(stateObj, "page 2", "bar.html")
+```
+
+上述demo会导致地址栏展示`http://mozilla.org/bar.html`，但是不会导致浏览器加载`bar.html`或者检测`bar.html`是否真实存在。
+
+假设此时用户导航到`http:google.com`，然点击`back`导航按钮，此时地址栏会展示`http://mozilla.org/bar.html`，`history.state`会包含`stateObj`。因为页面重载了，所以`popState`事件不会被触发，页面会展示真实的`bar.html`。
+
+如果用户再次点击了`back`导航按钮，地址栏会变为`http://mozilla.org/foo.html`，并且会触发`popState`，stateObj为`null`。页面此时不会重载，会触发`popState`。这里需要注意的是，页面内容展示和`back`前是一致的，除非在`popState`里进行了处理。
+
+> 需要注意的是，通常情况下`history.back()`与点击`back`按钮的作用是一致的，除了以下情况：
+> 使用了`history.pushState()`再调用`history.back()`不会触发`popstate`事件，但是点击浏览器`back`按钮会触发。
+
+
+
+
+
+
+## Virtual DOM
+
+Virtual Dom 算法的实现也就是以下三步
+
+- 通过 JS 来模拟创建 DOM 对象
+- 判断两个对象的差异
+- 渲染差异
+
+### 为什么需要Virtual DOM
+
+直接操作DOM是一个很耗性能的问题，所以考虑通过JS对象来模拟DOM对象
+
+以下是一个 `JS 对象`模拟 `DOM 对象`的简单实现
+
+```js
+export default class Element {
+  /**
+   * @param {String} tag 'div'
+   * @param {Object} props { class: 'item' }
+   * @param {Array} children [ Element1, 'text']
+   * @param {String} key option
+   */
+  constructor(tag, props, children, key) {
+    this.tag = tag;
+    this.props = props;
+    if (Array.isArray(children)) {
+      this.children = children;
+    } else if (isString(children)) {
+      this.key = children;
+      this.children = null;
+    }
+
+    if (key) {
+      this.key = key;
+    }
+  }
+
+  // 渲染
+  render() {
+    let root = this._createElement(
+      this.tag,
+      this.props,
+      this.children,
+      this.key,
+    )
+    document.body.appendChild(root);
+    return root;
+  }
+
+  create() {
+    return this._createElement(this.tag, this.props, this.children, this.key);
+  }
+
+  // 创建节点
+  _createElement(tag, props, children, key) {
+    // 通过tag创建节点
+    let el = document.createElement(tag);
+
+    // 设置节点属性
+    for (const key in props) {
+      if (props.hasOwnProperty(key)) {
+        const value = props[key];
+        el.setAttribute(key, value);
+      }
+    }
+
+    if (key) {
+      el.setAttribute('key', key);
+    }
+
+    // 递归添加子节点
+    if (children) {
+      children.forEach(el => {
+        let child;
+        if (el instanceof Element) {
+          child = this._createElement(
+            el.tag,
+            el.props,
+            el.children,
+            el.key
+          )
+        } else {
+          child = document.createTextNode(el);
+        }
+        el.appendChild(child);
+      })
+    }
+
+    return el;
+  }
+}
+
+```
+
+
+### Virtual DOM算法简述
+
+使用JS模拟实现了DOM后，接下来的难点就在于如何判断旧的对象和新的对象之间的差异。
+
+`DOM 是多叉树的结构`，如果需要完整的对比两颗树的差异，那么需要的时间复杂度会是 `O(n ^ 3)`，这个复杂度肯定是不能接受的。于是 `React 团队优化了算法，实现了 O(n) 的复杂度来对比差异`。
+
+`实现 O(n) 复杂度的关键就是只对比同层的节点，而不是跨层对比`，这也是考虑到在实际业务中很少会去跨层的移动 DOM 元素。
+
+所以判断差异的算法就分为了两步
+
+- 首先从上至下，从左往右遍历对象，也就是树的深度遍历，这一步中会给每个节点添加索引，便于最后渲染差异
+- 一旦节点有子元素，就去判断子元素是否有不同
+
+
+
+### Virtual DOM算法实现
+
+#### 树的递归
+
+首先我们来实现树的递归算法，在实现该算法前，先来考虑下两个节点对比会有几种情况
+- 新的节点的 `tagName` 或者 `key` 和旧的不同，这种情况代表需要替换旧的节点，并且也不再需要遍历新旧节点的子元素了，因为整个旧节点都被删掉了
+- 新的节点的 `tagName` 和 `key`（可能都没有）和旧的相同，开始遍历子树
+- 没有新节点，什么都不做；
+
+
+```js
+import {StateEnums, isString, move} from './util';
+import Element from './element';
+
+export default function diff(oldDomTree, newDomTree) {
+	// 记录差异
+	let patches = {};
+
+	// 一开始索引为0
+	dfs(oldDomTree, newDomTree, 0, patches);
+
+	return patches;
+}
+
+function dfs(oldNode, newNode, index, patches) {
+	// 保存子树更改
+	let curPatches = [];
+	// 需要判断三种情况
+	// 1. 没有新节点，什么都不做
+	// 2. 新旧节点tagName或key不同，直接替换
+	// 3. 新旧节点tagNane及key都相同，遍历子树
+
+	if (!newNode) {
+
+	} else if (newNode.tag === oldNode.tag && newNode.key === oldNode.tag) {
+		// 判断属性是否变更
+		let props = diffProps(oldNode.props, newNode.props);
+		if (props.length) {
+			curPatches.push({ type: StateEnums.ChangeProps, props })
+		}
+		// 遍历子树
+		diffChildren(oldNode.children, newNode.children, index, patches);
+	} else {
+		// 节点不同，需要替换
+		curPatches.push({ type: StateEnums.Replace, node: newNode })
+	}
+
+	if (curPatches.length) {
+		if(patches[index]) {
+			patches[index] = patches[index].concat(curPatches);
+		} else {
+			patches[index] = curPatches;
+		}
+	}
+}
+
+```
+
+
+#### 判断属性的更改
+
+判断属性的更改也分三个步骤：
+- 遍历旧的属性列表，查看每个属性是否还存在于新的属性列表中
+- 遍历新的属性列表，判断两个列表中都存在的属性的值是否有变化
+- 在第二步中同时查看是否有属性不存在与旧的属性列列表中
+
+```js
+function diffProps(oldProps, newProps) {
+    // 判断props分三步：
+    // 1. 遍历oldProps查看是否存在删除的属性
+    // 2. 遍历newProps是否有属性值的变更
+    // 3. 基于2查看是否有新增属性
+
+    let changes = []; // 属性变更记录
+
+    for (const key in oldProps) {
+        if (oldProps.hasOwnProperty(key) && !newProps[key]) { // 属性移除
+            change.push({ prop: key });
+        }
+    }
+
+    for (const key in newProps) {
+        if (newProps.hasOwnProperty(key)) {
+            const prop = newProps[key];
+            if (oldProps[key] && oldProps[key] !== newProps[key]) { // 属性值变更
+                change.push({ prop: key, value: newProps[key] });
+            }
+        } else if (!oldProps[key]) { // 新增属性
+            change.push({ props: key, value: newProps[key] });
+        }
+    }
+    return change;
+}
+
+```
+
+
+#### 判断列表差异算法实现
+
+这个算法是整个 Virtual Dom 中最核心的算法，且让我一一为你道来。 这里的主要步骤其实和判断属性差异是类似的，也是分为三步：
+1. 遍历旧的节点列表，查看每个节点是否还存在于新的节点列表中
+2. 遍历新的节点列表，判断是否有新的节点
+3. 在第二步中同时判断节点是否有移动
+
+PS：该算法只对有 key 的节点做处理
+
+```js
+function listDiff(oldList, newList, index, patches) {
+  // 为了遍历方便，先取出两个 list 的所有 keys
+  let oldKeys = getKeys(oldList)
+  let newKeys = getKeys(newList)
+  let changes = []
+
+  // 用于保存变更后的节点数据
+  // 使用该数组保存有以下好处
+  // 1.可以正确获得被删除节点索引
+  // 2.交换节点位置只需要操作一遍 DOM
+  // 3.用于 `diffChildren` 函数中的判断，只需要遍历
+  // 两个树中都存在的节点，而对于新增或者删除的节点来说，完全没必要
+  // 再去判断一遍
+  let list = []
+  oldList &&
+    oldList.forEach(item => {
+      let key = item.key
+      if (isString(item)) {
+        key = item
+      }
+      // 寻找新的 children 中是否含有当前节点
+      // 没有的话需要删除
+      let index = newKeys.indexOf(key)
+      if (index === -1) {
+        list.push(null)
+      } else list.push(key)
+    })
+  // 遍历变更后的数组
+  let length = list.length
+  // 因为删除数组元素是会更改索引的
+  // 所有从后往前删可以保证索引不变
+  for (let i = length - 1; i >= 0; i--) {
+    // 判断当前元素是否为空，为空表示需要删除
+    if (!list[i]) {
+      list.splice(i, 1)
+      changes.push({
+        type: StateEnums.Remove,
+        index: i
+      })
+    }
+  }
+  // 遍历新的 list，判断是否有节点新增或移动
+  // 同时也对 `list` 做节点新增和移动节点的操作
+  newList &&
+    newList.forEach((item, i) => {
+      let key = item.key
+      if (isString(item)) {
+        key = item
+      }
+      // 寻找旧的 children 中是否含有当前节点
+      let index = list.indexOf(key)
+      // 没找到代表新节点，需要插入
+      if (index === -1 || key == null) {
+        changes.push({
+          type: StateEnums.Insert,
+          node: item,
+          index: i
+        })
+        list.splice(i, 0, key)
+      } else {
+        // 找到了，需要判断是否需要移动
+        if (index !== i) {
+          changes.push({
+            type: StateEnums.Move,
+            from: index,
+            to: i
+          })
+          move(list, index, i)
+        }
+      }
+    })
+  return { changes, list }
+}
+
+function getKeys(list) {
+  let keys = []
+  let text
+  list &&
+    list.forEach(item => {
+      let key
+      if (isString(item)) {
+        key = [item]
+      } else if (item instanceof Element) {
+        key = item.key
+      }
+      keys.push(key)
+    })
+  return keys
+}
+
+```
+
+#### 遍历子元素打标识
+
+对于这个函数来说，主要功能就两个
+- 判断两个列表差异
+- 给节点打上标记
+
+
+```js
+function diffChildren(oldChild, newChild, index, patches) {
+    let { change, list } = listDiff(oldChild, newChild, index, patches);
+    if (changes.length) {
+        if (patches[index]) {
+            patches[index] = patches[index].concat(changes)
+        } else {
+            patches[index] = changes
+        }
+    }
+
+    // 记录上一个遍历过的节点
+    let last = null;
+    oldChild &&
+        oldChild.forEach((item, i) => {
+            let child = item && item.children;
+
+            if (child) {
+                index = last && last.children ? index + last.children.length + 1 : index + 1;
+                let keyIndex = list.indexOf(item.key);
+                let node = newChild[keyIndex];
+                // 只遍历新旧中都存在的节点，其他增删的没必要遍历
+                if (node) {
+                    dfs(item, node, index, patches);
+                }
+            } else {
+                index += 1;
+            }
+
+            last = item;
+        })
+}
+```
+
+
+
+#### 渲染差异
+通过之前的算法，我们已经可以得出两个树的差异了。既然知道了差异，就需要局部去更新 DOM 了，下面就让我们来看看 Virtual Dom 算法的最后一步骤
+
+这个函数主要两个功能
+1. 深度遍历树，将需要做变更操作的取出来
+2. 局部更新DOM
+
+整体来说这部分代码还是很好理解的
+
+```js
+let index = 0;
+export default function patch(node, patches) {
+    let changes = patch[index];
+    let childNodes = node && node.childNodes;
+    // 这里的深度遍历和diff中是一样的
+    if (!childNodes) {
+        index += 1;
+    }
+    if (changes && changes.length && patches[index]) {
+        changeDom(node, changes)
+    }
+
+    let last = null;
+    if (childNodes && childNodes.length) {
+        childNodes.forEach((item, i) => {
+            index = last && last.children ? index + last.children.length + 1 : index + 1;
+            patch(item, patches);
+            last = item;
+        })
+    }
+}
+
+function changeDom(node, changes, noChild) {
+    changes &&
+        changes.forEach(change => {
+            let { type } = change;
+            switch (type) {
+                case StateEnums.ChangeProps:
+                    let { props } = change;
+                    props.forEach(item => {
+                        if (item.value) {
+                            node.setAttribute(item.prop, item.value);
+                        } else {
+                            node.removeAttribute(item.prop);
+                        }
+                    })
+                    break;
+                case StateEnums.Remove:
+                    node.childNodes[change.index].remove();
+                    break;
+                case StateEnums.Insert:
+                    let dom;
+                    if (isString(change.node)) {
+                        dom = document.createTextNode(change.node);
+                    } else if (change.node instanceof Element) {
+                        dom = change.node.create();
+                    }
+                    node.insertBefore(dom, node.childNodes[change.index])
+                case StateEnums.Replace:
+                    node.parentNode.replaceChild(change.node.create(), node);
+                    break;
+                case StateEnums.Move:
+                    let fromNode = node.childNodes[change.from];
+                    let toNode = node.childNodes[change.to];
+                    let cloneFromNode = fromNode.cloneNode(true);
+                    let cloenToNode = toNode.cloneNode(true);
+                    node.replaceChild(cloneFromNode, toNode)
+                    node.replaceChild(cloenToNode, fromNode)
+                    break;
+                default:
+                    break;
+            }
+        })
+}
+
+```
+
+#### 最后
+
+Virtual Dom 算法的实现也就是以下三步：
+1. 通过 JS 来模拟创建 DOM 对象
+2. 判断两个对象的差异
+3. 渲染差异
+
+
+```js
+     test4 = new Element('div', { class: 'my-div' }, ['test4'])
+let test5 = new Element('ul', { class: 'my-div' }, ['test5'])
+
+let test1 = new Element('div', { class: 'my-div' }, [test4])
+
+let test2 = new Element('div', { id: '11' }, [test5, test4])
+
+let root = test1.render()
+
+let pathchs = diff(test1, test2)
+console.log(pathchs)
+
+setTimeout(() => {
+  console.log('开始更新')
+  patch(root, pathchs)
+  console.log('结束更新')
+}, 1000)
+```
+
+
+> 完整代码可以参考[FE-demos/demo03-virtual-dom](https://github.com/luofeng457/FE-demos/blob/master/demo03-virtual-dom/src/index.js)
+
+
+---
+
+# Vue
+
+## NextTick原理分析
+
+> `nextTick` 可以让我们在下次 DOM 更新循环结束之后执行延迟回调，`用于获得更新后的 DOM`
+
+---
+
+
+# React
+
+## React生命周期分析
+在` V16 版本中引入了 Fiber 机制`。这个机制一定程度上的影响了部分生命周期的调用，并且也引入了新的 2 个 API 来解决问题。
+
+在之前的版本中，如果你拥有一个很复杂的复合组件，然后改动了最上层组件的 state，那么调用栈可能会很长
+
+![avatar](./assets/react-lifecycle.png)
+
+调用栈过长，再加上中间进行了复杂的操作，就`可能导致长时间阻塞主线程`，带来不好的用户体验。`Fiber 就是为了解决该问题而生`。
+
+
+> `Fiber 本质上是一个虚拟的堆栈帧`，新的调度器会`按照优先级`自由调度这些帧，从而将之前的`同步渲染改成了异步渲染`，在不影响体验的情况下去`分段计算更新`。
+
+![avatar](./assets/react-fiber.png)
+
+对于如何区别优先级，React 有自己的一套逻辑。对于动画这种实时性很高的东西，也就是 16 ms 必须渲染一次保证不卡顿的情况下，React 会每 16 ms（以内） 暂停一下更新，返回来继续渲染动画。
+
+
+对于异步渲染，现在渲染有两个阶段：`reconciliation` 和 `commit` 。`前者过程是可以打断的，后者不能暂停`，会一直更新界面直到完成。
+
+
+### Reconciliation 阶段（异步）
+- [UNSAFE_]componentWillMount
+- [UNSAFE_]componentWillReceiveProps
+- getDeriveStateFromProps
+- shouldComponentUpdate
+- [UNSAFE_]componentWillUpdate
+- render
+
+### Commit 阶段（同步）
+- getSnapshotBeforeUpdate
+- componentDidMount
+- componentDidUpdate
+- componentWillUnmount
+
+`commit phase`通常是`同步执行`（因为该步骤涉及到真实DOM的更新及UI展现）
+
+
+因为`reconciliation`阶段时可以被打断的，所以`reconciliation`阶段会执行的生命周期函数就可能会出现调用多次的情况，从而引起bug。所以`reconciliation`阶段调用的几个函数，除了`shouldComponentUpdate`外，其他的都应该避免去使用，并且V16也引入了新的API来解决这个问题。
+
+
+> `getDerivedStateFromProps`用于替换`componentWillReceiveProps`，该函数会在初始化和`update`时被调用；`getDerivedStateFromProps`在`render`函数之前调用，通常它会返回一个对象去更新`state`或者`null`不做更新；
+
+```js
+// static getDerivedStateFromProps(props, state)
+class ExampleComponent extends React.Component {
+  // Initialize state in constructor,
+  // Or with a property initializer.
+  state = {}
+
+  static getDerivedStateFromProps(nextProps, prevState) {
+    if (prevState.someMirroredValue !== nextProps.someValue) {
+      return {
+        derivedData: computeDerivedState(nextProps),
+        someMirroredValue: nextProps.someValue
+      }
+    }
+
+    // Return null to indicate no change to state.
+    return null
+  }
+}
+
+```
+
+> `getSnapshotBeforeUpdate`用于替换`componentWillUpdate`，该函数会在`update后DOM更新前被调用`，用于读取最新的DOM数据。该函数的任意返回值都会作为`componentDidUpdate`的参数。
+
+```js
+class ScrollingList extends React.component {
+    constructor(props) {
+        super(props);
+        this.listRef = React.createRef();
+    }
+
+    getSnapshotBeforeUpdate(prevProps, prevState) {
+        // Are we adding new items to the list?
+        // Capture the scroll position so we can adjust scroll later.
+        if (prevProps.list.length < this.props.list.length) {
+            const list = this.listRef.current;
+            return list.scrollHeight - list.scrollTop;
+        }
+        return null;
+    }
+
+    componentDidUpdate(prevProps, prevState, snapshot) {
+        // If we have a snapshot value, we've just added new items.
+        // Adjust scroll so these new items don't push the old ones out of view.
+        // (snapshot here is the value returned from getSnapshotBeforeUpdate)
+        if (snapshot !== null) {
+            const list = this.listRef.current;
+            list.scrollTop = list.scrollHeight - snapshot;
+        }
+    }
+ 
+    render() {
+        return (
+            <div ref={this.listRef}>{/* ...contents... */}</div>
+        );
+    }
+
+}
+```
+
+
+### V16 生命周期函数用法建议
+
+```js
+class ReactLifeCycle extends React.Component {
+  // 初始化state和事件绑定
+  constructor() {}
+  // getDerivedStateFromProps会在调用render之前调用，即在渲染DOM元素前会调用，并且在初始化挂载及后续更新时都会被调用。state的值在任何时候都取决于props
+  // getDerivedStateFromProps的存在只有一个目的：让组件在props变化时更新state
+  // 因为该函数是静态函数，所以取不到 `this`
+  static getDerivedStateFromProps(props, state) {}
+  // 判断是否需要更新组件，多用于组件性能优化，需要返回一个boolean值
+  shouldComponentUpdate(nextProps, nextState) {}
+  // 组件挂载后调用
+  // 可以在该函数中进行请求或者订阅
+  componentDidMount() {}
+  // getSnapshotBeforeUpdate()方法在最近一次渲染输出（提交到 DOM 节点）之前调用；在 getSnapshotBeforeUpdate() 方法中，我们可以访问更新前的 props 和 state；
+  getSnapshotBeforeUpdate(prevProps, prevState) {}
+  // 组件即将销毁
+  // 可以在此处移除订阅，定时器等等
+  componentWillUnmount() {}
+  // 组件销毁后调用
+  componentDidUnMount() {}
+  // 组件更新后调用
+  componentDidUpdate(prevProps, prevState, snapshot) {}
+  // 渲染组件函数
+  render() {}
+  // 以下函数不建议使用
+  `UNSAFE_componentWillMount() {}
+  UNSAFE_componentWillUpdate(nextProps, nextState) {}
+  UNSAFE_componentWillReceiveProps(nextProps) {}`
+}
+
+```
+
+### setState
+
+`setState` 在 React 中是经常使用的一个 API，但是它存在一些问题，可能会导致犯错，`核心原因就是因为这个 API 是异步的`。
+
+首先 `setState` 的调用并不会马上引起 `state` 的改变，并且如果你一次调用了多个 `setState` ，那么结果可能并不如你期待的一样。
+
+```js
+  // 初始化 `count` 为 0
+  console.log(this.state.count) // -> 0
+  this.setState({ count: this.state.count + 1 })
+  this.setState({ count: this.state.count + 1 })
+  this.setState({ count: this.state.count + 1 })
+  console.log(this.state.count) // -> 0
+```
+
+第一，两次的打印都为 0，因为 setState 是个异步 API，只有同步代码运行完毕才会执行。setState 异步的原因我认为在于，setState 可能会导致 DOM 的重绘，如果调用一次就马上去进行重绘，那么调用多次就会造成不必要的性能损失。设计成异步的话，就可以将多次调用放入一个队列中，在恰当的时候统一进行更新过程。
+
+第二，虽然调用了三次 setState ，但是 count 的值还是为 1。因为多次调用会合并为一次，只有当更新结束后 state 才会改变，三次调用等同于如下代码
+
+```js
+Object.assign(
+  {},
+  { count: this.state.count + 1 },
+  { count: this.state.count + 1 },
+  { count: this.state.count + 1 }
+)
+
+```
+
+当然你也可以通过以下方式来实现调用三次 setState 使得 count 为 3
+
+```js
+handle() {
+    this.setState((prevState) => ({ count: prevState.count + 1 }))
+    this.setState((prevState) => ({ count: prevState.count + 1 }))
+    this.setState((prevState) => ({ count: prevState.count + 1 }))
+}
+
+```
+
+如果想要每次`setState`后获取正确的`state`，可以通过如下代码实现：
+
+```js
+handle() {
+    this.setState(
+        (prevState) => ({ count: prevState.count + 1}),
+        () => console.log('updateCount: ', this.state.count)
+    )
+}
+```
+
+
+### Redux源码分析
+
+#### 什么是Redux
+
+Redux是JS应用的状态容器，提供可预测的状态管理
+
+- 可预测：Redux 让你开发出 `行为稳定可预测`、可`运行在不同环境 `（客户端、服务端和原生程序）、且 `易于测试` 的应用。
+- 可调试：Redux DevTools 让你轻松追踪到 `应用的状态在何时、何处以及如何改变`。Redux 的架构让你记下每一次改变，借助于 "`时间旅行调试`"，你甚至可以把完整的错误报告发送给服务器。
+- 集中管理：集中管理应用的状态和逻辑可以让你开发出强大的功能，如 `撤销/重做、 状态持久化` 等等。
+- 灵活：Redux `可与任何 UI 层框架搭配使用`，并且有 庞大的插件生态 来实现你的需求。
+
+#### 什么时候用Redux
+- 应用中很多state在多个组件中需要使用
+- 更新state的逻辑很复杂
+- 中、大型代码量的应用，多人协作开发
+- 应用state会随时间的推移而频繁更新
+
+#### Redux数据流
+
+![avatar](./assets/redux_flow.jpg)
+
+具体来说，对于 Redux，我们可以将这些步骤分解为更详细的内容：
+
+- 初始启动时：
+    - 使用最顶层的 root reducer 函数创建 Redux store
+    - store 调用一次 root reducer，并将返回值保存为它的初始 state
+    - 当视图 首次渲染时，视图组件访问 Redux store 的当前 state，并使用该数据来决定要呈现的内容。同时监听 store 的更新，以便他们可以知道 state 是否已更改。
+
+- 更新环节：
+    - 应用程序中发生了某些事情，例如用户单击按钮 
+    - dispatch 一个 action 到 Redux store，例如 dispatch({type: 'counter/increment'})
+    - store 用之前的 state 和当前的 action 再次运行 reducer 函数，并将返回值保存为新的 state 
+    - store 通知所有订阅过的视图，通知它们 store 发生更新
+    - 每个订阅过 store 数据的视图 组件都会检查它们需要的 state 部分是否被更新。
+    - 发现数据被更新的每个组件都强制使用新数据重新渲染，紧接着更新网页
+
+使用动画表示：
+
+![avatar](./assets/redux.gif)
+
+#### Redux规则
+- 仅使用`state`和`action`计算新的状态值
+- immutable data，禁止直接修改 state；
+- 禁止任何异步逻辑、依赖随机值或导致其他“副作用”的代码；
+
+
+#### 异步逻辑与数据请求
+
+![avatar](./assets/ReduxAsyncDataFlowDiagram.gif)
+
+
+##### combineReducers
+```js
+// reducers:
+// {
+//	  a: reducerA,
+//	  b: reducerB,
+// }
+const combineReducers = reducers => {
+	const reducerKeys = Object.keys(reducers);
+
+	let finalReducers = {}
+	// 如果ruducer不是函数，将其过滤
+	for (let i = 0; i < reducerKeys.length; i++) {
+		const key = reducerKeys[i];
+		if (typeof reducers[key] === 'function') {
+			finalReducers[key] = reducers[key];
+		}
+	}
+
+	const finalReducerKeys = Object.keys(finalReducers);
+
+	// 返回值为组合后的reducer函数，返回总的state
+	return function combination(state, action) {
+		let hasChanged = false;
+
+		const nextState = {};
+
+		for (let i = 0; i < finalReducerKeys.length; i++) {
+			let key = finalReducerKeys[i];
+			let reducer = finalReducers[key];
+			// state树与finalReducers的key是一一对应的，获取对应key的reducer state
+			let prevStateForKey = state[key];
+			let nextStateForkey = reducer(prevStateForKey, action);
+ 			// 执行reducer获取nextState
+			nextState[key] = nextStateForkey;
+
+			hasChanged = hasChanged || nextStateForkey !== prevStateForKey;
+		}
+
+		// 如果状态改变，返回nextState; 否则返回state;
+		return hasChanged ? nextState : state;
+	}
+}
+```
+
+
+##### createStore
+
+```js
+function createStore(reducer, enhancer) {
+    if (enhancer) {
+		return enhancer(createStore)(reducer);
+	}
+
+	let currentState = {};
+	let currentListeners = [];
+	let isDispatching = false;
+
+	function getState() {
+		return currentState;
+	}
+
+	function subscribe(listener) {
+		currentListeners.push(listener);
+		let isSubscribed = true;
+
+		return function unsubscribe() {
+			if (!isSubscribed) { 
+				return;
+			}
+
+			if (isDispatching) { // reducer是否正在执行
+				throw new Error('xxxx');
+			}
+
+			isSubscribed = false; // 重置已订阅标志位
+
+			const index = currentListeners.indexOf(listener);
+			currentListeners.splice(index, 1);
+		}
+	}
+
+	function dispatch(action) {
+		try {
+			isDispatching = true;
+			currentState = reducer(currentState, action); // 更新currentState
+		} finally {
+			isDispatching = false;
+		}
+		currentListeners.forEach(listener => listener()); // 执行监听回调
+
+		return action;
+	}
+
+
+	return { getState, subscribe, dispatch};
+}
+
+```
+
+
+##### applyMiddleware
+
+```js
+// middleware: ({ getState, dispatch }) => next => action;
+// middleware只是包装了store的dispatch方法
+function logger (extraArgument) {
+    return
+        ({ getState, dispatch })
+            (next) =>
+                action => {
+                    console.log('will dispatch: ', action);
+                    // 判断 dispatch 中的参数是否为函数
+                    if (typeof action === 'function') {
+                        // 是函数的话再把这些参数传进去，直到 action 不为函数，执行 dispatch({tyep: 'XXX'})
+                        return action(dispatch, getState, extraArgument);
+                    }
+                    let returnValue = next(action);
+                    return returnValue;
+                }
+}
+
+// 该函数返回一个柯里化的函数
+// 所以调用这个函数应该这样写 applyMiddleware(...middlewares)(createStore)(...args)
+function applyMiddleware (...middlewares) {
+    return
+        createStore =>
+            (reducer, preloadedState) => {
+                const store = createStore(reducer, preloadedState);
+                let dispatch = store.dispatch;
+
+                const middlewareAPI = {
+                    getState: store.getState,
+                    dispatch: (action, ...args) => dispatch(action, ...args)
+                }
+
+                const chain = middlewares.map(middleware => middleware(middlewareAPI));
+                dispatch = compose(...chain)(store.dispatch);
+
+                return {
+                    ...store,
+                    dispatch,
+                }
+            }
+}
+
+```
+
+
+
+##### compose
+
+- 高阶函数
+- 通过使用 reduce 函数做到`从右至左调用函数`
+
+```js
+// 这个函数设计的很巧妙，通过传入函数引用的方式让我们完成多个函数的嵌套使用，术语叫做高阶函数
+// 通过使用 reduce 函数做到从右至左调用函数
+// 对于上面项目中的例子
+compose(
+    applyMiddleware(thunkMiddleware),
+    window.devToolsExtension ? window.devToolsExtension() : f => f
+)
+
+// 经过 compose 函数变成了 applyMiddleware(thunkMiddleware)(window.devToolsExtension()())
+// 所以在找不到 window.devToolsExtension 时你应该返回一个函数
+function compose(...funcs) {
+    if (funcs.length === 0) {
+        return arg => arg;
+    }
+
+    if (funcs.length === 1) {
+        return funcs[0];
+    }
+
+    return funcs.reduce((a, b) => (...args) => a(b(...args)));
+}
+
+function add (x) {
+    return x + 1;
+}
+
+function pow (x) {
+    return Math.pow(x, 2);
+}
+
+compose()(3); // 3
+
+compose(add, pow)(3); // 10
+
+compose(pow, add)(3); // 16
+
+
+```
+
+
+### redux中间件
+
+- 用途：主要用于`处理异步数据流`；redux中间件的`实质是对store的dispatch进行重新包装`，修改store.dispatch的默认行为；redux中间件是对redux功能的一种扩展，也是扩展dispatch的唯一标准方式；
+
+- 特点：链式调用
+
+- 既然其本质是对store.dispatch的重新，那么如果不计代码整洁性及冗杂性，任意的middleware均可以手写实现；
+
+#### 进一步分析中间件
+
+1. 假如我们需要在store.dispatch前后需要查看对应的action以及state，我们需要这么实现：
+    ```js
+    let action = addTodo('learning redux middlewares');
+    console.log('dispatched action: ', action);
+    store.dispacth(action);
+    console.log('nextState: ', store.getState());
+
+    ```
+
+2. 如果上述功能是为了我们方便查看日志，显然将其封装为一个函数更方便；
+    ```js
+    function dispatchAndLog(store, action) {
+        console.log('dispatched action: ', action);
+        store.dispacth(action);
+        console.log('nextState: ', store.getState());
+    }
+    ```
+
+3. 这样相对方便了，但是每次使用我们需要引入这个函数；如果我们还想偷懒，可以通过调用原生的store.dispatch就可以实现这些功能岂不是美滋滋~
+
+    于是，我们开始重写`store.dispatch`
+
+    ```js
+    store.dispatch = function (action) {
+        console.log('dispatched action: ', action);
+        store.dispacth(action);
+        console.log('nextState: ', store.getState());
+    }
+
+    ```
+
+4. 参考redux的源码我们知道，`store.dispatch`函数接受一个`action`参数，返回同一个`dispatched action`；因此，我们需要对该段代码继续优化；
+
+    ```js
+    function dispatchAndLogWrapper (store) {
+        const next = store.dispatch;
+        
+        return function dispatchAndLog(action) {
+            console.log('dispatched action: ', action);
+            let result = next(action);
+            console.log('nextState: ', store.getState());
+            return result;
+        }
+    }
+    ```
+    
+    这样，我们中间件返回一个被`middleware`重写后的`store.dispatch`函数；这样`奠定了链式调用的基础`；
+
+    但是对于链式调用，后一个中间件对`store.dispatch`的修改是基于前一个中间件修改的基础上进行的；而上述实现中我们的`next`总是为固定值，即原生的store.dispatch；next的期望值应当是上一个中间件重写后的store.dispatch；因此，`中间件的实现中next通常作为参数传入；next的初始值取原生的store.dispatch`；
+
+5. 中间件函数的描述形式为：`({ getState, dispatch }) => next => action`；据此，改写我们的模拟中间件实现：
+
+    ```js
+    const dispatchAndLogWrapper = store => next => action => {
+        console.log('dispatched action: ', action);
+        let result = next(action);
+        console.log('nextState: ', store.getState());
+        return result;
+    }
+    ```
+
+6. 模拟实现applyMiddleware
+    
+    applyMiddleware可以实现对中间件的链式调用
+    ```js
+    function applyMiddleware(store, middlewares) {
+        middlewares = middlewares.slice();
+        middlewares.reverse(); // applyMiddleware其实是store Enhancer扩展机制的一个范例，因此也遵循compose从右至左的组合方式；
+
+        let dispatch = store.dispatch; //获取初试dispatch
+        // 这里next的初始值为store.dispatch，每次调用一个middleware都是在上一个middleware返回的dispatch的基础进行修改；
+        middlewares.map(middleware => {
+            dispatch = middleware(store)(dispatch);
+        });
+
+        // 将dispatch的修改应用到store并返回修改后的store
+        return {
+            ...store,
+            dispatch,
+        }
+    }
+    ```
+
+
+#### redux-thunk
+
+```js
+// source code
+function createThunkMiddleware(extraArgument) {
+  return ({ dispatch, getState }) => (next) => (action) => {
+    if (typeof action === 'function') {
+      return action(dispatch, getState, extraArgument);
+    }
+
+    return next(action);
+  };
+}
+
+const thunk = createThunkMiddleware();
+thunk.withExtraArgument = createThunkMiddleware;
+
+export default thunk;
+```
+
+使用方法：
+```js
+import { createStore, applyMiddleware } from 'redux';
+import thunk from 'redux-thunk';
+import rootReducer from './reducers';
+
+// Note: this API requires redux@>=3.1.0
+const store = createStore(rootReducer, applyMiddleware(thunk));
+
+```
+
+
+### reac-redux
+
+#### Provider
+```js
+class Provider extends React.Component {
+    static childContextTypes = {
+        store: PropTypes.object
+    }
+    constructor(props, context) {
+        super(props, context);
+        this.store = props.store;
+    }
+    getChildContext() {
+        return {store: this.store};
+    }
+    render() {
+        return this.props.children;
+    }
+}
+```
+
+
+#### connect
+```js
+const connect = (mapStateToProps, mapDispatchToProps) => {
+	(WrapContainer) => {
+		return class ConnectComponent extends React.Component {
+			constructor(props, context) {
+				super(props, context);
+				this.state = {
+					props: {}
+				}
+			}
+
+			componentDidMount() {
+				const { store } = this.context;
+				store.subscribe(() => this.update());
+				this.update();
+			}
+
+			update() {
+				const { store } = this.context;
+				const stateProps = mapStateToProps(store.getState());
+				const dispatchProps = mapDispatchToProps(bindActionCreator(mapDispatchToProps, stroe.dispatch));
+
+				this.setState({
+					props: {
+						...this.state.props,
+						stateProps,
+						dispatchProps,
+					}
+				})
+			}
+
+			render() {
+				return <WrapContainer {...this.state.props} />
+			}
+		}
+	}
+}
+```
+
 
 
 
@@ -3652,6 +5295,8 @@ const hash = sha256.finalize();
 16. [十分钟搞懂HTTP和HTTPS协议？](https://zhuanlan.zhihu.com/p/72616216)
 17. [HTTPS为什么安全 &分析 HTTPS 连接建立全过程](https://wetest.qq.com/labs/110)
 18. [白帽子讲web安全](https://pan.baidu.com/disk/main?from=homeFlow#/index?category=all&path=%2F%E7%BD%91%E7%AB%99%E5%88%B6%E4%BD%9C%2Fbook)
+19. [vue数据劫持](https://blog.csdn.net/luofeng457/article/details/103306672)
+20. [Working with the History API](https://developer.mozilla.org/zh-CN/docs/Web/API/History_API/Working_with_the_History_API)
 
 
 
