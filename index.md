@@ -5273,7 +5273,988 @@ const connect = (mapStateToProps, mapDispatchToProps) => {
 ```
 
 
+----
 
+# React源码解读
+
+## render流程一：
+```js
+// render函数
+function render(element, container, callback?: function) {
+    if (!isValidContainer(container)) {
+        throw Error('Target container is not a DOM element);
+    }
+
+    return legacyRenderSubtreeIntoContainer(null, element, container, false, callback);
+}
+
+// legacyRenderSubtreeIntoContainer
+function legacyRenderSubtreeIntoContainer(parent, children, container, forceHydrate, callback?: function) {
+    let root: Root = (container._reactRootContainer: any);
+
+    if (!root) {
+        root = container._reactRootContainer = legacyCreateRootFromDOMContainer(container, forceHydrate);
+        fiberRoot = root._internalRoot;
+    }
+    // 后续代码暂时省略
+}
+
+```
+
+一开始进来函数的时候肯定是没有 root 的，因此我们需要去创建一个 root，大家可以发现这个 `root` 对象同样也被挂载在了 `container._reactRootContainer` 上，也就是我们的 DOM 容器上
+
+控制台console一下`document.querySelector('#root')._reactRootContainer`我们就可以看到`root`对象。
+
+![avatar](./assets/render_1_1.png)
+
+可以看到root是`ReactRoot`构造函数构造出来的，并且内部有一个`_internalRoot`对象，这个是接下来要重点介绍的`fiber`对象
+
+
+```js
+// legacyCreateRootFromDOMContainer
+function legacyCreateRootFromDOMContainer(container, forceHydrate) {
+    var shouldHydrate = forceHydrate || shouldHydrateDueToLegacyHeuristic(container); // First clear any existing content.和SSR相关，先忽略这部分
+
+    if (!shouldHydrate) {
+        let warned = false;
+        let rootSibling;
+        while ((rootSibling = container.lastChild)) {
+            container.removeChild(rootSibling);
+        }
+    }
+
+    const isConcurrent = false;
+    return new ReactRoot(container, isConcurrent, shouldHydrate);
+}
+
+```
+
+首先还是和上文中提到的 forceHydrate 属性相关的内容，不需要管这部分，反正 `shouldHydrate` 肯定为 `false`
+
+接下来是将容器内部的节点全部移除，一般来说我们都是这样写一个容器的
+
+```html
+<div id='root'></div>
+```
+
+> 这样的形式肯定就不需要去移除子节点了，这也侧面说明了一点那就是`容器内部不要含有任何的子节点`。
+
+一是肯定会被移除的，二是还要进行DOM操作，可能还会设计到重绘回流等；
+
+最后就是创建了一个 `ReactRoot` 对象并返回。接下来的内容中我们会看到好几个 root，可能会有点绕。
+
+```js
+function ReactRoot(
+    container: DOMContainer,
+    isConcurrent: boolean,
+    hydarate: boolean,
+) {
+    // 这个root指的是FiberRoot
+    const root = createContainer(container, isConcurrent, hydrate);
+    this._internalRoot = root;
+}
+
+function createContainer(
+    containerInfo: Container,
+    isConcurrent: boolean,
+    hydrate: boolean,
+): OpaqueRoot {
+    return createFiberRoot(containerInfo, isConcurrent, hydrate);
+}
+```
+
+在 ReactRoot 构造函数内部就进行了一步操作，那就是创建了一个 FiberRoot 对象，并挂载到了 _internalRoot 上。`和 DOM 树一样，fiber 也会构建出一个树结构（每个 DOM 节点一定对应着一个 fiber 对象），FiberRoot 就是整个 fiber 树的根节点`，接下来的内容里我们将学习到关于 fiber 相关的内容。这里提及一点，`fiber 和 Fiber 是两个不一样的东西，前者代表着数据结构，后者代表着新的架构`。
+
+```js
+function createFiberRoot(
+    containerInfo: any,
+    isConcurrent: boolean,
+    hydrate: boolean,
+): FiberRoot {
+    // FiberRootNode内部创建了很多属性
+    const root: FiberRoot = (new FiberRootNode(containerInfo, hydrate): any);
+    const uninitialized = crateHostRootFiber(isConcurrent);
+    root.current = uninitializedFiber;
+    uninitializedFiber.stateNode = root;
+
+    return root;
+}
+
+```
+
+在 `createFiberRoot` 函数内部，分别`创建了两个 root`，一个 root 叫做 `FiberRoot`，另一个 root 叫做 `RootFiber`，并且它们两者还是相互引用的。
+
+这两个对象内部拥有着数十个属性，现在我们没有必要一一去了解它们各自有什么用处，在当下只需要了解少部分属性即可，其他的属性我们会在以后的文章中了解到它们的用处。
+
+对于 `FiberRoot` 对象来说，我们现在只需要了解两个属性，分别是 `containerInfo` 及 `current`。`前者代表着容器信息`，也就是我们的 document.querySelector('#root')；`后者指向 RootFiber`。
+
+
+对于 RootFiber 对象来说，我们需要了解的属性稍微多点
+
+```js
+function FiberNode(
+	tag: WorkTag,
+	pendingProps: mixed,
+	key: null | string,
+	mode: TypeOfMode,
+) {
+	this.stateNode = null;
+	this.return = null;
+	this.child = null;
+	this.sibling = null;
+	this.effectTag = NoEffect;
+	this.alternate = null;
+}
+```
+
+`return`、`child`、`sibling` 这三个属性很重要，它们是构成 fiber 树的主体数据结构。`fiber 树其实是一个单链表树结构`，`return 及 child 分别对应着树的父子节点`，并且父节点`只有一个 child 指向它的第一个子节点`，即便是父节点有好多个子节点。那么多个子节点如何连接起来呢？答案是 sibling，每个子节点都有一个 sibling 属性指向着下一个子节点，都有一个 return 属性指向着父节点。这么说可能有点绕，我们通过图来了解一下这个 fiber 树的结构。
+
+```js
+const APP = () => (
+    <div>
+        <span></span>
+        <span></span>
+    </div>
+)
+
+ReactDom.render(<APP/>, document.querySelector('#root'))
+```
+
+![avatar](./assets/fiber-tree.png)
+
+![avatar](./assets/fiber-tree-2.png)
+从图中我们可以看到，每个组件或者 DOM 节点都会对应着一个 fiber 对象。另外你手边有 React 项目的话，也可以在控制台输入如下代码，查看 fiber 树的整个结构。
+
+```js
+// 对应着 FiberRoot
+const fiber = document.querySelector('#root')._reactRootContainer._internalRoot
+```
+
+另外两个属性在本文中虽然用不上，但是看源码的时候笔者觉得很有意思，就打算拿出来说一下。
+
+在说 `effectTag` 之前，我们先来了解下啥是 `effect`，简单来说就是 DOM 的一些操作，比如增删改，那么 effectTag 就是来记录所有的 effect 的，但是这个记录是通过位运算来实现的；
+
+> 如果我们想新增一个 effect 的话，可以这样写 `effectTag |= Update`；如果我们想删除一个 effect 的话，可以这样写 `effectTag &= ~Update`。
+
+最后是 `alternate` 属性。其实在`一个 React 应用中，通常来说都有两个 fiebr 树`，一个叫做 old tree，另一个叫做 workInProgress tree。`前者对应着已经渲染好的 DOM 树，后者是正在执行更新中的 fiber tree，还能便于中断后恢复`。两棵树的节点互相引用，便于共享一些内部的属性，减少内存的开销。毕竟前文说过每个组件或 DOM 都会对应着一个 fiber 对象，应用很大的话组成的 fiber 树也会很大，如果两棵树都是各自把一些相同的属性创建一遍的话，会损失不少的内存空间及性能。
+
+`当更新结束以后，workInProgress tree 会将 old tree 替换掉`，这种做法称之为 `double buffering`，这也是性能优化里的一种做法，有兴趣的同学可以自行查找资料。
+
+### 总结：
+![avatar](./assets/render_1_summary.png)
+
+
+
+<br>
+
+## render流程二：
+
+### ReactRoot.prototype.render
+
+在上一篇文章中，我们介绍了当 ReactDom.render 执行时，内部会首先判断是否已经存在 root，没有的话会去创建一个 root。在今天的文章中，我们将会了解到存在 root 以后会发生什么事情。
+
+```js
+unbatchedUpdates(() => {
+    if (parentComponent !== null) {
+        root.legacy_renderSubtreeIntoContainer(parentComponent, children, callback) 
+    } else {
+        root.render(children, callback);
+    }
+})
+
+```
+
+大家可以看到，在上述的代码中调用了 `unbatchedUpdates` 函数，这个函数涉及到的知识其实在 React 中相当重要。
+
+大家都知道多个 setState 一起执行，并不会触发 React 的多次渲染。
+
+```js
+// 虽然 age 会变成 3，但不会触发 3 次渲染
+this.setState({ age: 1 })
+this.setState({ age: 2 })
+this.setState({ age: 3 })
+```
+
+这是因为内部会将这个三次 setState 优化为一次更新，术语是批量更新（`batchedUpdate`），我们在后续的内容中也能看到内部是如何处理批量更新的。
+
+> 对于 root 来说其实没必要去批量更新，所以这里调用了 `unbatchedUpdates` 函数来告知内部不需要批量更新。
+
+然后在 `unbatchedUpdates` 回调内部判断是否存在 `parentComponent`。这一步我们可以假定不会存在 parentComponent，因为很少有人会在 root 外部加上 context 组件。不存在 parentComponent 的话就会执行 root.render(children, callback)，`这里的 render 指的是 ReactRoot.prototype.render`。
+
+```js
+ReactRoot.prototype.render = function(
+    children: ReactNodeList,
+    callback?: () => mixed,
+): Work {
+    const root = this._internalRoot;
+    const work = new ReactWork();
+    callback = callback === undefined ? null : callback;
+
+    if (callback !== null) {
+        work.then(callback);
+    }
+
+    updateContainer(children, root, null, work._onCommit);
+    return work;
+}
+
+```
+
+在 render 函数内部我们首先取出 root，`这里的 root 指的是 FiberRoot`。
+
+然后创建了 `ReactWork` 的实例，这块内容我们没有必要深究，`功能就是为了在组件渲染或更新后把所有传入 ReactDom.render 中的回调函数全部执行一遍`。
+
+接下来我们来看 `updateContainer` 内部是怎么样的。
+
+```js
+function updateContainer(
+    element: ReactNodeList,
+    container: OpaqueRoot,
+    parentComponent?: React$Component<any, any>,
+    callback?: function,
+): ExpirationTime {
+    const current = container.current;
+    const currentTime = requestCurrentTime();
+    const expirationTime = computeExpirationForFiber(currentTime, current);
+    return updateContainerAtExpirationTime(
+        element,
+        container,
+        parentComponent,
+        callback,
+    );
+}
+```
+
+我们先从 `FiberRoot` 的 `current` 属性中取出它的 `fiber` 对象，然后计算了两个时间。这两个时间在 React 中相当重要，因此我们需要单独用一小节去学习它们。
+
+### 时间
+
+首先是 `currentTime`，在 `requestCurrentTime` 函数内部计算时间的最核心函数是 `recomputeCurrentRendererTime`。
+
+```js
+function recomputeCurrentRendererTime() {
+    const currentTimeMs = now() - originalStartTimeMs;
+    currentRendererTime = msToExpirationTime(currentTimeMs);
+}
+```
+
+now() 就是 performance.now()，`originalStartTimeMs 是 React 应用初始化时就会生成的一个变量，值也是 performance.now()，并且这个值不会在后期再被改变`。那么这两个值相减以后，得到的结果也就是`现在离 React 应用初始化时经过了多少时间`。
+
+然后我们需要把计算出来的值再通过一个公式算一遍，这里的 `| 0 `作用是取整数，也就是说 `11 / 10 | 0 = 1`
+
+```js
+const UNIT_SIZE = 10;
+
+const MAGIC_NUMBER_OFFSET = 1073741823 - 1;
+
+// 1 unit of expiration time represents 10ms.
+export funtion msToExpirationTime(ms: number): ExpirationTime {
+    // Always add an offset so that we don't clash with the magic number for NoWork.
+    return MAGIC_NUMBER_OFFSET - ((ms / UNIT_SIZE) | 0);
+}
+
+```
+
+接下来我们来假定一些变量值，代入公式来算的话会更方便大家理解。
+
+假如 originalStartTimeMs 为 2500，当前时间为 5000，那么算出来的差值就是 2500，也就是说当前距离 React 应用初始化已经过去了 2500 毫秒，最后通过公式得出的结果为：
+
+```js
+currentTime = 1073741822 - ((2500 / 10) | 0) = 1073741572
+```
+
+接下来是计算 `expirationTime`，`这个时间和优先级有关，值越大，优先级越高`。并且同步是优先级最高的，它的值为 1073741823，也就是之前我们看到的常量 MAGIC_NUMBER_OFFSET 加一。
+
+在 `computeExpirationForFiber` 函数中存在很多分支，但是计算的核心就只有三行代码，分别是：
+
+```js
+// 同步
+expirationTime = Sync
+// 交互事件，优先级较高
+expirationTime = computeInteractiveExpiration(currentTime)
+// 异步，优先级较低
+expirationTime = computeAsyncExpiration(currentTime)
+```
+
+
+接下来我们就来分析 `computeInteractiveExpiration` 函数内部是如何计算时间的，当然 `computeAsyncExpiration` 计算时间的方式也是相同的，无非更换了两个变量。
+
+```js
+export const HIGH_PRIORITY_EXPIRATION = __DEV__ ? 500 : 150;
+export const HIGH_PRIORITY_BATCH_SIZE = 100;
+
+export function computeInteractiveExpiration(currENTTime： ExpirationTime) {
+    return computeExpirationBucket(
+        currentTime,
+        HIGH_PRIORITY_EXPIRATION,
+        HIGH_PRIORITY_BATCH_SIZE,
+    );
+}
+
+function computeExpirationBucket(
+    currentTime,
+    expirationInMs,
+    bucketSizeMs,
+): ExpirationTime {
+    return (
+        MAGIC_NUMBER_OFFSET -
+        ceiling(
+            MAGIC_NUMBER_OFFSET - currentTime + expirationTnMs / UNIT_SIZE,
+            bucketSizeMs / UNIT_SIZE,
+        )
+    )
+}
+
+function ceiling(num: number, precision: number): number {
+    return (((num / precision) | 0) + 1) * precision;
+}
+
+```
+
+以上这些代码其实就是公式，我们把具体的值带入就能算出结果了。
+```js
+time = 1073741822 - ((((1073741822 - 1073741572 + 15) / 10) | 0) + 1) * 10 = 1073741552
+```
+
+另外在 ceiling 函数中的 `1 * bucketSizeMs / UNIT_SIZE 是为了抹平一段时间内的时间差，在抹平的时间差内不管有多少个任务需要执行，他们的过期时间都是同一个`，这也算是一个性能优化，帮助渲染页面行为节流。
+
+最后其实我们这个计算出来的 `expirationTime` 是可以反推出另外一个时间的：
+
+```js
+export function expirationTimeToMs(expirationTime: ExpirationTime): number {
+	return (MAGIC_NUMBER_OFFSET - expirationTime) * UNIT_SIZE;
+}
+
+```
+
+如果我们将之前计算出来的 `expirationTime` 代入以上代码，得出的结果如下：
+```js
+(1073741822 - 1073741552) * 10 = 2700
+```
+
+这个时间其实和我们之前在上文中计算出来的 2500 毫秒差值很接近。`因为 expirationTime 指的就是一个任务的过期时间，React 根据任务的优先级和当前时间来计算出一个任务的执行截止时间`。只要这个值比当前时间大就可以一直让 React 延后这个任务的执行，以便让更高优先级的任务执行，但是一旦过了任务的截止时间，就必须让这个任务马上执行。
+
+这部分的内容一直在算来算去，看起来可能有点头疼。当然如果你嫌麻烦，只需要记住任务的过期时间是通过当前时间加上一个常量（任务优先级不同常量不同）计算出来的。
+
+### scheduleRootUpdate
+
+当我们计算出时间以后就会调用 `updateContainerAtExpirationTime`，这个函数其实没有什么好解析的，我们直接进入 `scheduleRootUpdate` 函数就好。
+
+```js
+function scheduleRootUpdate(
+    current: Fiber,
+    element: ReactNodeList,
+    expirationTime: ExpirationTime,
+    callback?: function,
+) {
+    const update = createUpdate(expirationTime);
+    update.payload = { element };
+
+    callback = callback === undefined ? null : callback;
+    if (callback !== null) {
+        update.callback = callback;
+    }
+
+    enqueueUpdate(current, update);
+    scheduleWork(current, expirationTime);
+
+    return expirationTime;
+}
+
+```
+
+首先我们会创建一个 update，这个对象和 setState 息息相关
+```js
+// update 对象的内部属性
+expirationTime: expirationTime,
+tag: UpdateState,
+// setState 的第一二个参数
+payload: null,
+callback: null,
+// 用于在队列中找到下一个节点
+next: null,
+nextEffect: null,
+
+```
+
+对于 update 对象内部的属性来说，我们需要重点关注的是 `next` 属性。`因为 update 其实就是一个队列中的节点，这个属性可以用于帮助我们寻找下一个 update`。对于批量更新来说，我们可能会创建多个`update`，因此我们想要将这些`update`串联并存储起来，在必要的时候拿出来用于更新`state`。
+
+在 render 的过程中其实也是一次更新的操作，但是我们并没有 setState，因此就把 payload 赋值为 {element} 了。
+
+接下来我们将 callback 赋值给 update 的属性，`这里的 callback 还是 ReactDom.render 的第三个参数`。
+
+然后我们将刚才创建出来的 update 对象插入队列中，`enqueueUpdate` 函数内部分支较多且代码简单，这里就不再贴出代码了，有兴趣的可以自行阅读。`函数核心作用就是创建或者获取一个队列，然后把 update 对象入队`。
+
+最后调用 `scheduleWork` 函数，这里开始就是调度相关的内容，这部分内容我们将在下一篇文章中来详细解析。
+
+
+### 总结
+以上就是本文的全部内容了，这篇文章其实核心还是放在了计算时间上，因为这个时间和后面的调度息息相关，最后通过一张流程图总结一下 render 流程两篇文章的内容。
+
+![avatar](./assets/render_2_summary.png)
+
+
+
+
+## 剖析 React 源码：调度原理
+
+### 为什么需要调度？
+
+`大家都知道 JS 和渲染引擎是一个互斥关系`。如果 JS 在执行代码，那么渲染引擎工作就会被停止。`假如我们有一个很复杂的复合组件需要重新渲染，那么调用栈可能会很长`
+
+![avatar](./assets/long-task.png)
+
+调用栈过长，再加上如果中间进行了复杂的操作，就可能导致长时间阻塞渲染引擎带来不好的用户体验，调度就是来解决这个问题的。
+
+React 会`根据任务的优先级去分配各自的 expirationTime，在过期时间到来之前先去处理更高优先级的任务，并且高优先级的任务还可以打断低优先级的任务`（因此会造成某些生命周期函数多次被执行），从而实现在不影响用户体验的情况下去`分段计算更新`（也就是时间分片）。
+
+![avatar](./assets/time-slice.png)
+
+
+### React如何实现调度
+
+React实现调度主要靠两块内容：
+1. 计算任务的`expirationTime`
+2. 实现`requestIdleCallback`的pollyfill版本
+
+#### expirationTime
+
+expriationTime 在前文简略的介绍过它的作用，这个时间可以帮助我们`对比不同任务之间的优先级以及计算任务的 timeout`。
+
+那么这个时间是如何计算出来的呢？简单来说就是`当前时间+一个常量（根据任务优先级改变）
+
+当前时间指的是`performance.now()`，这个API会返回一个精确到毫秒级别的时间戳，另外浏览器并不都兼容`performance`API，这里暂时当做`performance.now()`。
+
+常量指的是根据不同优先级得出一个数值，React内部目前总共有五种优先级，分别为：
+```js
+var ImmediatePriority = 1;
+var UserBlockingPriority = 2;
+var NormalPriority = 3;
+var LowPriority = 4;
+var IdlePriority = 5;
+```
+
+它们各自对应的数值是不同的，具体如下：
+
+```js
+var maxSigned31BitInt = 1073741823;
+
+// Times out immediately
+var IMMEDIATE_PRIORITY_TIMEOUT = -1;
+// Eventually times out
+var USER_BLOCKING_PRIORITY = 250;
+var NORMAL_PRIORITY_TIMEOUT = 5000;
+var LOW_PRIORITY_TIMEOUT = 10000;
+// Never times out
+var IDLE_PRIORITY = maxSigned31BitInt;
+```
+
+也就是说，假设当前时间为 5000 并且分别有两个优先级不同的任务要执行。前者属于 `ImmediatePriority`，后者属于 `UserBlockingPriority`，那么两个任务计算出来的时间分别为 `4999` 和 `5250`。通过这个时间可以比对大小得出谁的优先级高，也可以通过减去当前时间获取任务的 timeout。
+
+#### requestIdleCallback
+
+说完了 `expirationTime`，接下来的主题就是实现 `requestIdleCallback` 了，我们首先来了解下该函数的作用
+
+![avatar](./assets/inter-frame-idle-callback.png)
+
+`该函数的回调方法会在浏览器的空闲时期依次调用`， 可以让我们在事件循环中执行一些任务，并且`不会对像动画和用户交互这样延迟敏感的事件产生影响`。
+
+在上图中我们也可以发现，该回调方法是在渲染以后才执行的。那么介绍完了函数的作用，接下来就来说说它的兼容性吧。这个函数的兼容性并不是很好，并且它还有一个致命的缺陷:
+
+> requestIdleCallback is called `only 20 times per second` - Chrome on my 6x2 core Linux machine, it's not really useful for UI work.
+
+这个完全满足不了现有的情况，由此 React 团队才打算自己实现这个函数。
+
+### 如何实现 requestIdleCallback
+
+```js
+window.requestIdleCallback = window.requestIdleCallback || function(handler) {
+  let startTime = Date.now();
+
+  return setTimeout(function() {
+    handler({
+      didTimeout: false,
+      timeRemaining: function() {
+        // 虽然我们的填充程序不会像真正的requestIdleCallback()将自己限制在当前事件循环传递中的空闲时间内，但它至少将每次传递的运行时间限制为不超过 50 毫秒
+        return Math.max(0, 50.0 - (Date.now() - startTime));
+      }
+    });
+  }, 1);
+}
+
+
+
+// 用 requestAnimationFrame + MessageChannel 实现
+let deadlineTime // 当前帧结束时间
+let callback // 需要回调的任务
+ 
+let channel = new MessageChannel(); // postMessage 的一种，该对象实例有且只有两个端口，并且可以相互收发事件，当做是发布订阅即可。
+let port1 = channel.port1;
+let port2 = channel.port2;
+ 
+port2.onmessage = () => {
+    const timeRemaining = () => deadlineTime - performance.now();
+    if (timeRemaining() > 1 && callback) {
+        const deadline = { timeRemaining, didTimeout: false }; // 同样的这里也是构造个参数
+        callback(deadline);
+    }
+}
+ 
+window.requestIdleCallback = function(cb) {
+    requestAnimationFrame(rafStartTime => {
+        // 大概过期时间 = 默认这是一帧的开始时间 + 一帧大概耗时
+        deadlineTime = rafStartTime + 16
+        callback = cb
+        port1.postMessage(null);
+    });
+ }
+
+```
+
+实现 `requestIdleCallback` 函数的核心只有一点，如何多次在`浏览器空闲时`且是`渲染后`才调用回调方法？
+
+说到多次执行，那么肯定得使用定时器了。在多种定时器中，唯有 `requestAnimationFrame` 具备一定的精确度，`因此 requestAnimationFrame 就是当下实现 requestIdleCallback 的一个步骤`。
+
+`requestAnimationFrame` 的回调方法会在每次`重绘前执行`，另外它还存在一个瑕疵：`页面处于后台时该回调函数不会执行`，因此我们需要对于这种情况做个补救措施
+
+```js
+rafId = requestAnimationFrame(function(timestamp) {
+    localClearTimeout(rafTimeoutId);
+    callback(timestamp);
+})
+
+refTimeoutId = setTimeout(function() {
+    // 定时100毫秒算是一个最佳实践
+    localCancelAnimationFrame(rafId);
+    callback(getCurrentTime());
+})
+
+```
+
+使用 `requestAnimationFrame` 只完成了多次执行这一步操作，接下来我们需要实现如何知道当前浏览器是否空闲呢？
+
+![avatar](./assets/life-of-a-frame.png)
+
+大家都知道在一帧当中，浏览器可能会`响应用户的交互事件`、`执行 JS`、`进行渲染`的一系列计算绘制。假设当前我们的浏览器支持 1 秒 60 帧，那么也就是说一帧的时间为 16.6 毫秒。`如果以上这些操作超过了 16.6 毫秒，那么就会导致渲染没有完成并出现掉帧`的情况，继而影响用户体验；如果以上这些操作没有耗时 16.6 毫秒的话，那么我们就认为当下存在空闲时间让我们可以去执行任务。
+
+因此接下去我们`需要计算出当前帧是否还有剩余时间让我们使用`
+
+```js
+let frameDeadline = 0;
+let previousFrameTime = 33;
+let activeFrameTime = 33;
+let nextFrameTime = performance.now() - frameDeadline + activeFrameTime
+
+if (
+    nextFrameTime < activeFrameTime &&
+	previousFrameTime < activeFrameTime
+) {
+    if (nextFrameTime < 8) {
+        nextFrameTime = 8;
+    }
+    activeFrameTime =
+		nextFrameTime < previousFrameTime ? previousFrameTime : nextFrameTime;
+} else {
+    previousFrameTime = nextFrameTime;
+}
+
+```
+
+以上这部分代码`核心就是得出每一帧所耗时间及下一帧的时间`。简单来说就是假设当前时间为 5000，浏览器支持 60 帧，那么 1 帧近似 16 毫秒，那么就会计算出下一帧时间为 5016。
+
+得出下一帧时间以后，我们`只需对比当前时间是否小于下一帧时间即可`，这样就能清楚地知道是否还有空闲时间去执行任务。
+
+那么最后一步操作就是如何在渲染以后才去执行任务。这里就需要用到事件循环的知识了
+
+![avatar](./assets/schedule-event-loop.png)
+
+想必大家都知道微任务宏任务的区别，这里就不再赘述这部分的内容了。从上图中我们可以发现，`在渲染以后只有宏任务是最先会被执行的，因此宏任务就是我们实现这一步的操作了`。
+
+但是生成一个宏任务有很多种方式并且各自也有优先级，那么为了最快地执行任务，我们肯定得选择优先级高的方式。在这里我们选择了 `MessageChannel` 来完成这个任务，`不选择 setImmediate 的原因是因为兼容性太差`。
+
+到这里为止，`requestAnimationFrame` + `计算帧时间及下一帧时间` + `MessageChannel` 就是我们实现 `requestIdleCallback` 的三个关键点了。
+
+
+### 调度的流程
+
+上文说了这么多，这一小节我们将来梳理一遍调度的整个流程。
+
+- 首先每个任务都会有各自的优先级，通过当前时间加上优先级所对应的常量我们可以计算出 expriationTime，`高优先级的任务会打断低优先级任务`；
+
+- 在调度之前，判断当前任务是否过期，`过期的话无须调度`，直接调用 port.postMessage(undefined)，这样就能在`渲染后马上执行过期任务`了
+
+- 如果`任务没有过期`，就通过 `requestAnimationFrame` 启动定时器，在`重绘前调用回调方法`
+
+- 在回调方法中我们首先需要计算每一帧的时间以及下一帧的时间，然后执行 `port.postMessage(undefined)`
+
+- `channel.port1.onmessage` 会在`渲染后被调用`，在这个过程中我们`首先需要去判断当前时间是否小于下一帧时间`。如果小于的话就代表我们尚有空余时间去执行任务；如果大于的话就代表当前帧已经没有空闲时间了，这时候我们需要去判断是否有任务过期，过期的话不管三七二十一还是得去执行这个任务。如果没有过期的话，那就只能把这个任务丢到下一帧看能不能执行了。
+
+<br/>
+
+
+## 组件更新流程一（调度任务）
+
+### 组件更新流程中你能学到什么？
+
+- `setState` 背后的批量更新如何实现
+- `Fiber` 是什么？有什么用？
+- 如何调度任务
+
+### setState批量更新实现原理
+
+想必大家都知道大部分情况下`多次 setState 不会触发多次渲染`，并且 state 的值也不是实时的，这样的做法能够`减少不必要的性能消耗`。
+
+```js
+handleClick () {
+  // 初始化 `count` 为 0
+  console.log(this.state.count) // -> 0
+  this.setState({ count: this.state.count + 1 })
+  this.setState({ count: this.state.count + 1 })
+  console.log(this.state.count) // -> 0
+  this.setState({ count: this.state.count + 1 })
+  console.log(this.state.count) // -> 0
+}
+
+```
+
+那么这个行为是如何实现的呢？答案是批量更新。接下来我们就来学习批量更新是如何实现的。
+
+其实这个背后的原理相当之简单。假如 handleClick 是通过点击事件触发的，那么 handleClick 其实差不多会被包装成这样：
+
+```js
+isBatchingUpdates = true
+try {
+  handleClick()
+} finally {
+  isBatchingUpdates = false
+  // 然后去更新
+}
+
+```
+
+在执行 handleClick 之前，其实 React 就会默认这次触发事件的过程中如果有 setState 的话就应该批量更新。
+
+当我们在 handleClick 内部执行 setState 时，`更新状态的这部分代码首先会被丢进一个队列中等待后续的使用`。然后继续处理更新的逻辑，毕竟触发 setState 肯定会触发一系列组件更新的流程。但是在这个流程中如果 React 发现需要批量更新 state 的话，就会立即中断更新流程。
+
+也就是说，虽然我们在 handleClick 中调用了三次 setState，但是并不会走完三次的组件更新流程，只是把更新状态的逻辑丢到了一个队列中。当 handleClick 执行完毕之后会再执行一次组件更新的流程。
+
+另外组件更新流程其实是有两个截然不同的分支的。一种就是触发更新以后一次完成全部的组件更新流程；另一种是触发更新以后分时间片段完成所有的组件更新，用户体验更好，这种方式被称之为`任务调度`。
+
+然本文也会提及一部分调度相关的内容，毕竟这块也包含在组件更新流程中。但是在学习任务调度之前，我们需要先来学习下 `fiber` 相关的内容，因为这块内容是 React 实现各种这些新功能的基石。
+
+### Fiber 是什么？有什么用？
+
+在了解 Fiber 之前，我们先来了解下为什么 React 官方要费那么大劲去重构 React。
+
+在 `React 15 `版本的时候，我们如果有组件需要更新的话，那么就会`递归向下遍历整个虚拟 DOM 树来判断需要更新的地方`。这种`递归的方式弊端在于无法中断，必须更新完所有组件才会停止`。这样的弊端会造成如果我们需要更新一些庞大的组件，那么在更新的过程中可能就会长时间阻塞主线程，从而`造成用户的交互、动画的更新等等都不能及时响应`。
+
+React 的组件更新过程简而言之就是在持续调用函数的一个过程，这样的一个过程会形成一个虚拟的`调用栈`。假如我们控制这个调用栈的执行，把整个更新任务拆解开来，尽可能地将更新任务放到浏览器空闲的时候去执行，那么就能解决以上的问题。
+
+那么现在是时候介绍 `Fiber` 了。`Fiber 重新实现了 React 的核心算法`，带来了杀手锏增量更新功能。它有能力`将整个更新任务拆分为一个个小的任务，并且能控制这些任务的执行`。
+
+这些功能主要是通过两个核心的技术来实现的：
+- `新的数据结构fiber`
+- `调度器`
+
+#### 新的数据结构 fiber
+
+前文中我们说到了需要拆分更新任务，那么`如何把控这个拆分的颗粒度呢`？答案是 `fiber`，即fiber是React任务调度的最小结构
+
+我们可以把每个 fiber 认为是一个工作单元，执行更新任务的整个流程（不包括渲染）就是在反复寻找工作单元并运行它们，这样的方式就实现了拆分任务的功能。
+
+拆分成工作单元的目的就是为了让我们能控制 stack frame（调用栈中的内容），可以随时随地去执行它们。由此使得我们在每运行一个工作单元后都可以按情况继续执行或者中断工作（中断的决定权在于调度算法）。
+
+
+那么 fiber 这个数据结构到底长什么样呢？现在就让我们来一窥究竟。
+
+fiber 内部其实存储了很多上下文信息，我们可以把它认为是改进版的虚拟 DOM，它同样也对应了组件实例及 DOM 元素。同时 fiber 也会组成 `fiber tree`，但是它的`结构不再是一个树，而是一个链表的结构`。
+
+以下是 fiber 中的一些重要属性：
+
+```js
+  // 浏览器环境下指 DOM 节点
+  stateNode: any,
+
+  // 形成列表结构
+  return: Fiber | null,
+  child: Fiber | null,
+  sibling: Fiber | null,
+
+  // 更新相关
+  pendingProps: any,  // 新的 props
+  memoizedProps: any,  // 旧的 props
+  // 存储 setState 中的第一个参数
+  updateQueue: UpdateQueue<any> | null,
+  memoizedState: any, // 旧的 state
+
+  // 调度相关
+  expirationTime: ExpirationTime,  // 任务过期时间
+
+  // 大部分情况下每个 fiber 都有一个替身 fiber
+  // 在更新过程中，所有的操作都会在替身上完成，当渲染完成后，
+  // 替身会代替本身
+  alternate: Fiber | null,
+
+  // 先简单认为是更新 DOM 相关的内容
+  effectTag: SideEffectTag, // 指这个节点需要进行的 DOM 操作
+  // 以下三个属性也会形成一个链表
+  nextEffect: Fiber | null, // 下一个需要进行 DOM 操作的节点
+  firstEffect: Fiber | null, // 第一个需要进行 DOM 操作的节点
+  lastEffect: Fiber | null, // 最后一个需要进行 DOM 操作的节点，同时也可用于恢复任务
+
+  // ...
+```
+
+总的来说，我们可以认为 fiber 就是一个工作单元的数据结构表现，当然它同样也是调用栈中的一个重要组成部分。
+
+> Fiber 和 fiber 不是同一个概念。前者代表新的调和器，后者代表 fiber node，也可以认为是改进后的虚拟 DOM。
+
+#### 调度器简介
+
+每次有新的更新任务发生的时候，调度器都会按照策略给这些任务分配一个优先级。比如说动画的更新优先级会高点，离屏元素的更新优先级会低点。
+
+`通过这个优先级我们可以获取一个该更新任务必须执行的截止时间`，优先级越高那么截止时间就越近，反之亦然。这个`截止时间是用来判断该任务是否已经过期，如果过期的话就会马上执行该任务`。
+
+然后调度器通过实现 requestIdleCallback 函数来做到在浏览器空闲的时候去执行这些更新任务。
+
+这其中的实现原理略微复杂。简单来说，就是通过定时器的方式，来获取每一帧的结束时间。得到每一帧的结束时间以后我们就能判断当下距离结束时间的一个差值。
+
+如果还未到结束时间，那么也就意味着我可以继续执行更新任务；如果已经过了结束时间，那么就意味着当前帧已经没有时间给我执行任务了，必须把执行权交还给浏览器，也就是打断任务的执行。
+
+另外当开始执行更新任务（也就是寻找工作单元并执行的过程）时，如果有新的更新任务进来，那么调度器就会按照两者的优先级大小来进行决策。如果新的任务优先级小，那么当然继续当下的任务；如果新的任务优先级大，那么会打断任务并开始新的任务。
+
+### 小结
+
+现在是时候把文章中提及到的内容整合起来了，另外我们假设更新任务必定会触发调度。
+
+当交互事件调用 setState 后，会触发批量更新，在整个交互事件回调执行完之前 state 都不会发生变更。
+
+回调执行完毕后，开始更新任务，并触发调度。调度器会给这些更新任务一一设置优先级，并且在浏览器空闲的时候去执行他们，当然任务过期除外（会立刻触发更新，不再等待）。
+
+如果在执行更新任务的时候，有新的任务进来，会判断两个任务的优先级高低。假如新任务优先级高，那么打断旧的任务，重新开始，否则继续执行任务。
+
+
+
+
+<br/>
+
+## 组件更新流程二（diff策略）
+
+### 调和的过程
+
+组件更新归结到底还是 DOM 的更新。对于 React 来说，这部分的内容会分为两个阶段：
+1. `调和阶段`，基本上也就是大家熟知的虚拟 DOM 的 diff 算法
+2. `提交阶段`，也就是将上一个阶段中 diff 出来的内容体现到 DOM 上
+
+这一小节的内容将会集中在调和阶段，提交阶段这部分的内容将会在下一篇文章中写到。另外大家所熟知的虚拟 DOM 的 diff 算法在新版本中其实已经完全被重写了。
+
+有个例子能更好地帮助理解，我们就通过以下组件的更新来了解整个调和的过程。
+
+```js
+class Test extends React.Component {
+  state = {
+    data: [{ key: 1, value: 1 }, { key: 2, value: 2 }]
+  };
+  componentDidMount() {
+    setTimeout(() => {
+      const data = [{ key: 0, value: 0 }, { key: 2, value: 2 }]
+      this.setState({
+        data
+      })
+    }, 3000);
+  }
+  render() {
+    const { data } = this.state;
+    return (
+      <>
+        { data.map(item => <p key={item.key}>{item.value}</p>) }
+      </>
+    )
+  }
+}
+
+```
+
+
+在前一篇文章中我们了解到了整个更新过程（不包括渲染）就是在反复寻找工作单元并运行它们，那么具体体现到代码中是怎么样的呢？
+
+```js
+while (nextUnitOfWork !== null && !shouldYield()) {
+    nextUnitOfWork = performUnitOfWork(nextUnitOfWork);
+}
+```
+
+上述代码的 while 循环只有当找不到工作单元或者应该打断的时候才会终止。`找不到工作单元的情况只有当循环完所有工作单元`才会触发，`打断的情况是调度器触发的`。
+
+> 当更新任务开始时，`root 永远是第一个工作单元`，无论之前有没有被打断过工作。
+
+循环寻找工作单元的这个流程其实很简单，就是自顶向下再向上的一个循环。这个循环的规则如下：
+
+1. `root` 永远是第一个工作单元，不管之前有没有被打断过任务
+2. 首先判断当前节点是否存在第一个子节点，存在的话它就是下一个工作单元，并让下一个工作节点继续执行该条规则，不存在的话就跳到规则 3
+3. 判断当前节点是否存在兄弟节点。如果存在兄弟节点，就回到规则 2，否则跳到规则 4
+4. 回到父节点并判断父节点是否存在。如果存在则执行规则 3，否则跳到规则 5
+5. 当前工作单元为`null`，即为完成整个循环
+
+
+了解了工作循环流程以后，我们就来深入学习一下工作单元是如何工作的。为了精简流程，我们就直接认为当前的工作单元为 Test 组件实例。
+
+在工作单元工作的这一阶段中其实是分为很多分支的，因为`涉及到不同类型组件及 DOM 的处理`。Test 是 class 组件，另外这也是最常用的组件类型，因此接下来的内容会着重介绍 class 组件的调和过程。
+
+class 组件的调和过程大致分为两个部分：
+- 生命周期函数的处理
+- 调和子组件，也就是 diff 算法的过程
+
+
+#### 处理 class 组件生命周期函数
+
+最先被处理的生命周期函数是 componentWillReceiveProps
+
+但是触发这个函数的条件有两个：
+- props 前后有差别
+- 没有使用 `getDerivedStateFromProps` 或者 `getSnapshotBeforeUpdate` 这两个新的生命周期函数。使用其一则 `componentWillReceiveProps` 不会被触发
+
+满足以上条件该函数就会被调用。因此该函数在 React 16 中已经不被建议使用。因为调和阶段是有可能会打断的，因此该函数会重复调用。
+
+> 凡是在调和阶段被调用的函数基本是不被建议使用的。
+
+接下来需要处理 `getDerivedStateFromProps` 函数来获取最新的 state。
+
+然后就是判断是否需要更新组件了，这一块的判断逻辑分为两块：
+1. 判断是否存在 `shouldComponentUpdate` 函数，存在就调用
+2. 不存在上述函数的话，就判断当前组件是否继承自 `PureComponent`。如果是的话，就浅比较前后的 props 及 state 得出结果
+
+如果得出结论需要更新组件的话，那么就会先调用 `componentWillUpdate` 函数，然后处理 `componentDidUpdate` 及 `getSnapshotBeforeUpdate` 函数。
+
+
+这里需要注意的是：调`和阶段并不会调用以上两个函数，而是打上 tag 以便将来使用位运算知晓是否需要使用它们``。effectTag` 这个属性在整个更新的流程中都是至关重要的一员，凡是涉及到函数的延迟调用、devTool 的处理、DOM 的更新都可能会使用到它。
+
+```js
+if (typeof instance.componentDidUpdate === 'function') {
+    workInProgress.effectTag |= Update;
+}
+
+if (typeof instance.getSnapshotBeforeUpdate === 'function') {
+    workInProgress.effectTag |= Snapshot;
+}
+```
+
+
+#### 调和子组件
+
+`处理完生命周期后，就会调用 render 函数获取新的 child，用于在之后与老的 child 进行对比`。
+
+在继续学习之前我们先来熟悉三个对象，因为它们在后续的内容中会反复出现：
+- `returnFiber`：父组件。
+- `currentFirstChild`：父组件的第一个 child。如果你还记得 fiber 的数据结构的话，应该知道每个 fiber 都有一个 sibling 属性指向它的兄弟节点。因此知道第一个子节点就能知道所有的同级节点。
+- `newChild`：也就是我们刚刚 render 出来的内容。
+
+`首先我们会判断 newChild 的类型，知道类型就可以进行相应的 diff 策略`了。它可能会是一个 Fragment 类型，也可能是 object、number 或者 string 类型。这几个类型都会有相应的处理，但这不是我们的重点，并且它们的处理也相当简单。
+
+我们的`重点会放在可迭代类型上，也就是 Array 或者 Iterator 类型`。这两者的核心逻辑是一致的，因此我们就只讲对 Array 类型的处理了。
+
+以下内容是对于 diff 算法的详解，虽然有`三次 for 循环，但是本质上只是遍历了一次整个 newChild`。
+
+##### 第一轮遍历
+
+第一轮遍历的`核心逻辑是复用和当前节点索引一致的老节点`，一旦出现不能复用的情况就跳出遍历。
+
+那么如何复用之前的节点呢？规则如下：
+- 新旧节点都为文本节点，可以直接复用，因为文本节点不需要 key
+- 其他类型节点一律通过判断 key 是否相同来复用或创建节点（可能类型不同但 key 相同）
+
+以下是简化后的第一轮遍历代码：
+
+```js
+for (; oldFiber !== null && newIdx < newChildren.length; newIdx++) {
+  // 找到下一个老的子节点
+  nextOldFiber = oldFiber.sibling;
+  // 通过 oldFiber 和 newChildren[newIdx] 判断是否可以复用
+  // 并给复用出来的节点的 return 属性赋值 returnFiber
+  const newFiber = reuse(
+    returnFiber,
+    oldFiber,
+    newChildren[newIdx]
+  );
+  // 不能复用，跳出
+  if (newFiber === null) {
+    break;
+  }
+}
+
+```
+
+那么回到上文中的例子中，我们老的第一个节点的 key 为 1，新的节点的 key 为 0。key 不相同不能复用，因此直接跳出循环，此时 newIdx 仍 为 0。
+
+
+##### 第二轮遍历
+
+当第一轮遍历结束后，会出现两种情况：
+- newChild 已经遍历完
+- 老的节点已经遍历完了
+
+当出现 `newChild 已经遍历完`的情况时只需要把所有剩`余的老节点都删除`即可。删除的逻辑也就是设置 `effectTag` 为 `Deletion`，另外还有几个 fiber 节点属性需要提及下。
+
+当出现需要在渲染阶段进行处理的节点时，会`把这些节点放入父节点的 effect 链表中`，比如需要被删除的节点就会把加入进链表。这个链表的作用是可以帮助我们在渲染阶段迅速找到需要更新的节点。
+
+当出现老的节点已经遍历完了的情况时，就会开始第二轮遍历。这轮遍历的逻辑很简单，只需要`把剩余新的节点全部创建完毕即可`。
+
+这轮遍历在我们的例子中是不会执行的，因为我们以上两种情况都不符合。
+
+
+##### 第三轮遍历
+
+第三轮遍历的核心逻辑是`找出可以复用的老节点并移动位置`，不能复用的话就只能创建一个新的了。
+
+那么问题又再次回到了`如何复用节点并移动位置上`。首先我们会`把所有剩余的老节点都丢到一个 map 中`。
+
+我们例子中的代码剩余的老节点为：
+
+```js
+<p key={1}>1</p>
+<p key={2}>2</p>
+
+```
+
+那么这个 map 的结构就会是这样的：
+```js
+// 节点的 key 作为 map 的 key
+// 如果节点不存在 key，那么 index 为 key
+const map = {
+    1: {},
+    2: {}
+}
+```
+
+在遍历的过程中会寻找新的节点的 key 是否存在于这个 map 中，存在即可复用，不存在就只能创建一个新的了。其实这部分的复用及创建的逻辑和第一轮中的是一模一样的，所以也就不再赘述了。
+
+那么如果`复用成功，就应该把复用的 key 从 map 中删掉，并且给复用的节点移动位置`。这里的移动依旧不涉及 DOM 操作，而是给 `effectTag` 赋值为 `Placement`。
+
+此轮遍历结束后，就把还存在于 map 中的所有老节点删除。
+
+
+以上就是diff子节点的全部逻辑
+
+
+
+
+
+
+
+
+--- 
+# 设计模式
+
+
+
+
+
+
+
+
+
+
+---
 
 
 ## 参考文献
@@ -5297,7 +6278,7 @@ const connect = (mapStateToProps, mapDispatchToProps) => {
 18. [白帽子讲web安全](https://pan.baidu.com/disk/main?from=homeFlow#/index?category=all&path=%2F%E7%BD%91%E7%AB%99%E5%88%B6%E4%BD%9C%2Fbook)
 19. [vue数据劫持](https://blog.csdn.net/luofeng457/article/details/103306672)
 20. [Working with the History API](https://developer.mozilla.org/zh-CN/docs/Web/API/History_API/Working_with_the_History_API)
-
+21. [剖析 React 源码：render 流程（一）](https://yuchengkai.cn/react/2019-05-05.html#render)
 
 
 
