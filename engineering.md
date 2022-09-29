@@ -422,12 +422,57 @@ yarn.lock没有使用json格式，而是使用了一种自定义的标记方式;
 
 # git
 
+## 基本概念
+
+
+我们先来理解下 Git 工作区、暂存区和版本库概念：
+
+- `工作区`：就是你在电脑里能看到的目录。
+- `暂存区`：英文叫 stage 或 index。`一般存放在 .git 目录下的 index 文件`（.git/index）中，所以我们把暂存区有时也叫作索引（index）。
+- `版本库`：工作区有一个隐藏目录 `.git`，这个不算工作区，而是 Git 的版本库。
+
+![avatar](./assets/git-workflow.jpg)
+
 ## git指令
 
 ![avatar](./assets/git-command.jpg)
 
+![avatar](./assets/git-command-2.jpg)
+
+### git diff
+
+git diff 有两个主要的应用场景。
+
+- 尚未缓存的改动：`git diff`
+- 查看已缓存的改动（暂存区与上一次commit的差异）： `git diff --cached`
+- 查看已缓存的与未缓存的所有改动：`git diff HEAD`
+- 显示摘要而非整个diff：`git diff --stat`
+
+### git reset 
+
+git reset 命令用于回退版本，可以指定退回某一次提交的版本。
+
+```
+git reset [--soft | --mixed | --hard] [HEAD]
+```
+
+> `git reset HEAD` 命令用于取消已缓存的内容。
+
+![avatar](./assets/git-reset-head.png)
+
+
+### git merge
+
+
+
+
+
 
 ## .git目录探析
+
+### .git文件夹位置及内容
+
+
 
 
 
@@ -453,3 +498,4 @@ yarn.lock没有使用json格式，而是使用了一种自定义的标记方式;
 1. [字节的一个小问题 npm 和 yarn不一样吗？](https://yuchengkai.cn/home/)
 2. [npm缓存现在是怎么做的？](https://www.zhihu.com/question/305539244)
 3. [.git目录探析](https://blog.csdn.net/luofeng457/article/details/117577275)
+4. [图解Git](http://marklodato.github.io/visual-git-guide/index-zh-cn.html)
