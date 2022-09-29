@@ -29,9 +29,9 @@
 - `webview`是一个承载网页的容器，能渲染web网页，`native开发也可以对webview 进行功能定制`, `修改和扩展js 执行环境的宿主对象`、`拦截webview发起的请求、控制缓存`等功能。通过这些能力，可以实现native 和h5之间的信息互通。
 
 - `JSBridge`相当于一个桥接器，构建了一个可以用于Native和JavaScript相互通信的`全双工通道`；主要包括了：
-    - H5调用Native：调用Native的原生功能、通知Native当前JS的状态；包括`注入API`和`URL Scheme`两种方式；
+    - H5调用Native：调用系统api、事件监听及状态同步；包括`注入API`和`URL Scheme`两种方式；
 
-    - Native调用H5：回溯调用结果、通知JS当前Native的状态、消息推送等；
+    - Native调用H5：消息推送、状态同步及回溯调用结果等；
 
         > Native 调用 JavaScript，其实就是执行拼接 JavaScript 字符串，从外部调用 JavaScript 中的方法，因此 JavaScript 的方法必须在全局的 window 上
 
@@ -62,7 +62,7 @@ APP开发基于 Facebook的开源项目`React Native`，开发语言可以使用
 
 开发中不仅需要代码调试而且还有底层交互，所以使用taro需要具备react、原生技能
 
-### Uni-app
+#### Uni-app
 
 Uni-app是一个开放式跨端跨框架解决方案，使用 Vue框架来开发小程序、H5、APP等应用。
 
@@ -72,6 +72,295 @@ Uni-app是一个开放式跨端跨框架解决方案，使用 Vue框架来开发
 
 
 <br/>
+
+## JSBridge简介
+
+### 定义
+
+正如其命名一样，`JSBridge`就相当于`js`与`native`之间进行全双工通信的一座桥梁，其内部定义了一套用于`js`与`native`进行通信的规范（包括`协议`、`方法`、`传参`及`回调`等）；
+
+### 用途
+
+JSBridge可以桥连js与native的通信，从而`使基于容器的web开发和优化成为可能`，如比较火的`hybrid app`技术；能够`提升页面性能`，`丰富页面功能`等；
+
+
+### JSBridge原理简析
+
+#### 框架简析
+
+JSBridge框架其实主要由两部分组成：第一部分是Native调用js，主要用于消息推送、状态同步及回溯调用结果等；第二部分是js调用Native，主要用于调用系统api、事件监听及状态同步等；
+
+#### `Native`调用`JS`
+
+##### Android
+Android有两种方式：4.4.0以前使用方法`loadUrl`——调用方便，无法获取回调结果，会刷新webview；`4.4.0+`使用方法`evaluateScript`提供更加高效完善的功能——`可以获取返回值并且不刷新webview`；
+
+```java
+# loadUrl
+mWebView.loadUrl("javascript: method(paramStr)");
+
+# evaluateScript
+mWebView.evaluateScript("javascript: method(paramStr)", new ValueCallback<String>() {
+  @override
+  public void onReceiveValue(String value) {
+    // do something after receive js callback value.
+  }
+});
+
+```
+
+
+##### IOS
+
+Native调用js的方法比较简单，Native通过`stringByEvaluatingJavaScriptFromString`调用Html绑定在window上的函数。不过应注意Oc和Swift的写法。
+
+- Native调用JS方法时,能拿到JS方法的返回值
+- 不适合传输大量数据(大量数据建议用接口方式获取)
+
+```js
+# UIWebView
+mWebView.stringByEvaluatingJavaScriptFromString("methodName(paramStr)");
+
+# WKWebView
+mWebView.evaluateScript("methodName(paramStr)");
+
+```
+
+#### JS调用Native
+
+##### `url schema`拦截
+
+![avatar](./assets/url-schema.png)
+
+h5和native约定一套通信协议作为通信基础，一般如下：
+```js
+schema://methodName?params=xxx&cb=xxx
+```
+
+其中`schema`为双方协商的协议名，`methodName`为js调用native的方法名，`params`为参数集字符串，`cb`为接收回调结果的js方法名；`在h5中发起请求时，一般通过构建一个不可见的iframe发起请求`；请求以约定的方式以url形式发送，`native会拦截h5的所有请求`（如进行长连接优化等），如果`发现url中的协议名是约定的协议名（如jsbridge），则会解析其中的methodName、params及cb等信息`。如下给出了简单实现：
+
+```js
+window.callId = 0;
+
+const callNative = (method, params = null, cb) => {
+  const paramsObj = {
+    data: params ? JSON.stringify(params) : null,
+  };
+  
+  if (typeof cb === 'function') {
+    const cbName = cb + window.callId++;
+    window[cbName] = cb;
+    paramsObj['cbName'] = cb;
+  }
+
+  // 设定通信URL供Native拦截
+  const url = `iqiyi: //${method}?${JSON.Stringify(paramsObj)}`;
+
+  const iframe = document.createElement('iframe');
+  iframe.src = url;
+  iframe.style.width = 0;
+  iframe.style.height = 0;
+  iframe.frameborder = 0;
+  iframe.style.display = 'none';
+  document.body.appenChild(iframe);
+
+  setTimeout(() => {
+    iframe.parentNode.removeChild(iframe);
+  }, 100);
+}
+
+```
+
+缺点：`消息传输通过url传输，因此传输数据长度受到限制`；
+
+
+##### `prompt`、`alert`、`confirm`拦截
+
+一般通过prompt进行通信，其他实现与url schema拦截类似；`native收到prompt事件后会通过onJsPrompt等类似事件对prompt做处理，从而获取js传入的method、params、cb等`；
+
+```js
+function callNative(method, params, cb) {
+	...
+	const url = `jsbridge://${method}?${JSON.stringify(paramsObj)}`;
+
+	prompt(url);
+}
+
+```
+
+缺点：ios的UIWebkit不支持
+
+##### 注入JS上下文
+
+这种方法一般是将需要供js调用的native方法`通过实例对象的方式`通过webview提供的方法`注入到js全局上下文`，这样`位于webview内的h5页面中js可以直接调用native的实例方法`；
+
+`注入方式`：`Android`的webview通过`addJavascriptInterface`；`ios UIWebview`通过`JSContext`；`ios WKWebview`通过`scriptMessageHandler`；
+
+下面是`Android`客户端关于注入JS上下文的简单demo；
+
+首先，声明一个`NativeMethods`的类，用于定义对外暴露给`js`调用的方法，格式如`methodName(webview, args, cb)`；
+
+然后定义一个`JSBridge`类：其中定义了两个静态方法和一个实例方法；`register`用于将nativeMethods类下的方法转为hashMap格式，便于查询；`call`是暴露给js的供js统一调用的方法；
+
+最后在`webview创建后`注册对外方法并`将JSBridge实例`通过`addJavascriptInterface`注入到JS全局上下文中；
+
+```js
+public class MainActivity extends AppCompatActivity {
+
+    private WebView mWebView;
+
+    @Override
+    protected void onCreate(Bundle savedInstanceState) {
+        super.onCreate(savedInstanceState);
+        setContentView(R.layout.activity_main);
+
+        mWebView = (WebView) findViewById(R.id.mWebView);
+
+        ...
+
+        // 将 NativeMethods 类下面的提供给 js 的方法转换成 hashMap
+        JSBridge.register("JSBridge", NativeMethods.class);
+
+        // 将 JSBridge 的实例对象注入到 js 全局上下文中，名字为 _jsbridge，该实例对象下有 call 方法
+        mWebView.addJavascriptInterface(new JSBridge(mWebView), "_jsBridge");
+    }
+}
+
+public class NativeMethods {
+    // 用来供 js 调用的方法
+    public static void methodName(WebView view, JSONObject arg, CallBack callBack) {
+    }
+}
+
+public class JSBridge {
+    private WebView mWebView;
+
+    public JSBridge(WebView webView) {
+        this.mWebView = webView;
+    }
+
+
+    private  static Map<String, HashMap<String, Method>> exposeMethods = new HashMap<>();
+
+    // 静态方法，用于将传入的第二个参数的类下面用于提供给 javacript 的接口转成 Map，名字为第一个参数
+    public static void register(String exposeName, Class<?> classz) {
+        ...
+        if (!exposeMethods.containsKey(exposeName)) {
+	        exposeMethods.put(exposeName, getAllMethod(classz));
+	    }
+    }
+
+    // 实例方法，用于提供给 js 统一调用的方法
+    @JavascriptInterface
+    public String call(String methodName, String args, callback) {
+        ...
+    }
+}
+
+```
+
+根据上述代码可以看到注入到js全局对象中的实例对象为`_jsBridge`；在h5中的调用如下：
+
+```js
+window.callId = 0;
+const callNative = (method, params = null, cb) => {
+	const paramsObj = {
+		data: params ? JSON.stringify(params) : null,
+	}
+	if (typeof cb === 'function') {
+		const cbName = cb + window.callId++;
+		window[cbName] = cb;
+		paramsObj['cbName'] = cbName;
+	}
+	if (window._jsBridge) {
+		window._jsBridge.call(method, JSON.stringify(paramsObj));
+	} else {
+		// 兜底方案
+		const url = `jsbridge://${method}?${JSON.stringify(paramsObj)}`;
+		prompt(url);
+	}
+
+```
+
+> 缺点：缺点：安卓4.2以下存在安全漏洞，可能会导致用户信息泄露；
+
+
+JSBridge静态方法的call方法实现：
+
+```js
+public static String call(WebView webView, String urlString) {
+
+    if (!urlString.equals("") && urlString!=null && urlString.startsWith("jsbridge")) {
+        Uri uri = Uri.parse(urlString);
+
+        String methodName = uri.getHost();
+
+        try {
+            JSONObject args = new JSONObject(uri.getQuery());
+            JSONObject arg = new JSONObject(args.getString("data"));
+            String cbName = args.getString("cbName");
+
+
+            if (exposeMethods.containsKey("JSBridge")) {
+                HashMap<String, Method> methodHashMap = exposeMethods.get("JSBridge");
+
+                if (methodHashMap!=null && methodHashMap.size()!=0 && methodHashMap.containsKey(methodName)) {
+                    Method method = methodHashMap.get(methodName);
+
+                    if (method!=null) {
+                        method.invoke(null, webView, arg, new CallBack(webView, cbName));
+                    }
+                }
+            }
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+
+    }
+    return null;
+}
+
+```
+
+除此之外，`js调用native方法成功需要给h5响应的结果反馈`，因此native端需要定义一个`Callback`类用于处理js调用成功的结果反馈；其本质还是native调用js方法，以下是安卓端使用evaluatecript方法实现的Callback类：
+
+```java
+public class CallBack {
+    private  String cbName;
+    private WebView mWebView;
+
+    public CallBack(WebView webView, String cbName) {
+        this.cbName = cbName;
+        this.mWebView = webView;
+    }
+
+    public void apply(JSONObject jsonObject) {
+        if (mWebView!=null) {
+            mWebView.post(() -> {
+                mWebView.evaluateJavascript("javascript:" + cbName + "(" + jsonObject.toString() + ")", new ValueCallback<String>() {
+                    @Override
+                    public void onReceiveValue(String value) {
+                        return;
+                    }
+                });
+            });
+        }
+    }
+}
+
+
+```
+
+![avatar](./assets/JSBridge.png)
+
+
+### JSBridge的引用
+
+- 由`h5`引用
+  由h5引用即使用对应的封装好的JSBridge的npm包，内部封装了js调用native方法的方法集；该方式能够保证调用时JSBridge一定存在；缺点是当有变更时，需要native与h5同时做变更进行兼容；
+
+- 由`native`注入
+  即上边提到的将JSBridge实例对象注入到js全局上下文；该方式有利于保障API与Native的一致性，但是由于注入方法和时机受到限制，h5调用时总是要判断JSBridge实例对象是否存在；
 
 
 ## React-Native实现
@@ -475,5 +764,5 @@ export default class Index extends Component {
 ---
 # 参考文献
 1. [聊聊跨端技术的本质与现状](https://mp.weixin.qq.com/s/G_2eBJyrr6FHm7WjI_MIPw)
-
+2. [JSbridge原理与实现简析](https://blog.csdn.net/luofeng457/article/details/108229675)
 

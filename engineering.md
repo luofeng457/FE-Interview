@@ -461,17 +461,38 @@ git reset [--soft | --mixed | --hard] [HEAD]
 ![avatar](./assets/git-reset-head.png)
 
 
-### git merge
+### 撤销修改 
+
+1. 直接丢弃工作区的修改
+    > `git checkout -- filename` // 直接丢弃工作区的修改
+
+2. 修改已加到暂存区，但未commit
+    - `git restore --staged <file>...`
+    - `git reset HEAD filename`
+
+3. 已经commit
+    版本回退
+
+### 版本回退
+
+1. git reset --hard HEAD^ (HEAD指向当前版本)
+2. git reset --hard 版本序列号
 
 
+
+
+
+### reflog
+
+`reflog` 可以看到 HEAD 的移动记录，假如之前误删了一个分支，可以通过 git reflog 看到移动 HEAD 的哈希值
+
+> reflog 记录是时效的，只会保存一段时间内的记录。
 
 
 
 
 ## .git目录探析
-
-### .git文件夹位置及内容
-
+[.git目录探析](https://blog.csdn.net/luofeng457/article/details/117577275)
 
 
 
