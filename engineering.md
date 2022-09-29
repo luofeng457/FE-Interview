@@ -418,13 +418,38 @@ yarn.lock没有使用json格式，而是使用了一种自定义的标记方式;
 如果依赖包中存在二进制包需要进行编译，那么会在这一步进行
 
 
+--- 
+
+# git
+
+## git指令
+
+![avatar](./assets/git-command.jpg)
+
+
+## .git目录探析
 
 
 
 
+---
 
+# Webpack
+
+
+---
+
+# Babel
+
+---
+
+# CI/CD
+
+
+
+---
 
 ## 参考文献
 1. [字节的一个小问题 npm 和 yarn不一样吗？](https://yuchengkai.cn/home/)
-
 2. [npm缓存现在是怎么做的？](https://www.zhihu.com/question/305539244)
+3. [.git目录探析](https://blog.csdn.net/luofeng457/article/details/117577275)
