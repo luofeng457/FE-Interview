@@ -360,7 +360,7 @@ public class CallBack {
   由h5引用即使用对应的封装好的JSBridge的npm包，内部封装了js调用native方法的方法集；该方式能够保证调用时JSBridge一定存在；缺点是当有变更时，需要native与h5同时做变更进行兼容；
 
 - 由`native`注入
-  即上边提到的将JSBridge实例对象注入到js全局上下文；该方式有利于保障API与Native的一致性，但是由于注入方法和时机受到限制，h5调用时总是要判断JSBridge实例对象是否存在；
+  
 
 
 ## React-Native实现
