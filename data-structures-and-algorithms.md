@@ -214,7 +214,6 @@ class SqQueue {
 
 ## 实现
 
-
 ```js
 class Node {
     constructor(val, next) {
@@ -276,8 +275,6 @@ class LinkList {
     checkIndex(index) {
         if (index < 0 || index > this.size) throw Error('error index');
     }
-
-
 }
 ```
 
@@ -425,6 +422,47 @@ list.traverse();
 
 <br>
 
+
+### LeetCode-206.反转单链表
+
+![avatar](./assets/leetcode-206.png)
+
+
+该题目来自 LeetCode，题目需要将一个单向链表反转。思路很简单，`使用三个变量分别表示当前节点和当前节点的前后节点`，虽然这题很简单，但是却是一道面试常考题
+
+![avatar](./assets/reverseList.gif)
+
+```js
+/**
+ * Definition for singly-linked list.
+ * function ListNode(val, next) {
+ *     this.val = (val===undefined ? 0 : val)
+ *     this.next = (next===undefined ? null : next)
+ * }
+ */
+/**
+ * @param {ListNode} head
+ * @return {ListNode}
+ */
+var reverseList = function(head) {
+    if (!head || !head.next) return head;
+    
+    let pre = null;
+    let current = head;
+    let next;
+    
+    while (current) {
+        next = current.next;
+        current.next = pre;
+        pre = current;
+        current = next;
+    }
+    return pre;
+};
+```
+
+
+
 --- 
 
 # 树
@@ -521,12 +559,12 @@ class BinaryTree {
             cur = s.pop();
             console.log(cur.value);
 
-            if (cur.left) {
-                s.push(cur.left);
-            }
-
             if (cur.right) {
                 s.push(cur.right);
+            }
+
+            if (cur.left) {
+                s.push(cur.left);
             }
         }
 
@@ -611,6 +649,91 @@ class BinaryTree {
         }
     }
 }
+
+```
+
+### LeetCode-104.二叉树的最大深度
+
+![avatar](./assets/leetcode-104.png)
+
+#### 递归 DFS
+
+> 时间复杂度O(N)，空间复杂度O(depth)——递归空间复杂度等于深度；
+
+```js
+// 递归
+/**
+ * Definition for a binary tree node.
+ * function TreeNode(val, left, right) {
+ *     this.val = (val===undefined ? 0 : val)
+ *     this.left = (left===undefined ? null : left)
+ *     this.right = (right===undefined ? null : right)
+ * }
+ */
+/**
+ * @param {TreeNode} root
+ * @return {number}
+ */
+var maxDepth = function(root) {
+    if (!root) return 0;
+    
+    return Math.max(maxDepth(root.left), maxDepth(root.right)) + 1;
+};
+
+```
+
+#### 迭代 BFS
+
+> `思路与算法`：我们也可以用「广度优先搜索」的方法来解决这道题目，但我们需要对其进行一些修改，此时我们广度优先搜索的队列里存放的是「当前层的所有节点」。每次拓展下一层的时候，`不同于广度优先搜索的每次只从队列里拿出一个节点，我们需要将队列里的所有节点都拿出来进行拓展`，这样能保证每次拓展完的时候队列里存放的是当前层的所有节点，即我们是一层一层地进行拓展，最后我们用一个变量 `ans` 来维护拓展的次数，该二叉树的最大深度即为`ans`。
+
+`时间复杂度：O(n)`，其中 n 为二叉树的节点个数。与方法一同样的分析，每个节点只会被访问一次。
+
+`空间复杂度`：此方法空间的消耗取决于队列存储的元素数量，其在`最坏情况下会达到 O(n)`。
+
+
+```js
+/**
+ * Definition for a binary tree node.
+ * function TreeNode(val, left, right) {
+ *     this.val = (val===undefined ? 0 : val)
+ *     this.left = (left===undefined ? null : left)
+ *     this.right = (right===undefined ? null : right)
+ * }
+ */
+/**
+ * @param {TreeNode} root
+ * @return {number}
+ */
+var maxDepth = function(root) {
+    if (!root) return 0;
+    
+    let queue = []; // 层序遍历
+    let depth = 0;
+
+    queue.push(root);
+    
+    while(queue.length > 0) {
+        let size = queue.length;
+
+        while (size > 0) {
+            let cur = queue.shift();
+
+            if (cur.left) {
+                queue.push(cur.left);
+            }
+
+            if (cur.right) {
+                queue.push(cur.right);
+            }
+
+            size--;
+        }
+
+        depth++;
+    }
+
+    return depth;
+};
 
 ```
 
@@ -1388,6 +1511,33 @@ function sum (a, b) {
 
 ```js
 ~10011  01100
+```
+#### 用于-1判定
+
+`抽象渗漏`：指在代码中暴露了底层实现细节；
+“~”非运算符可以用于防止抽象渗漏；
+
+```js
+var str = "Hello World";
+if (a.indexOf("ol") == -1) {	// 暴露了条件判断临界点
+	Toast('not found');
+}
+// 使用'~'运算符
+if (!~a.indexOf("ol")) {
+	Toast('not found');
+}
+
+```
+
+#### 取整
+
+```js
+~~2.4 // 2
+
+~~ 3.8 // 3
+
+~~-2.1 // -2
+
 ```
 
 
@@ -2427,6 +2577,197 @@ function heapify(arr, n, i) {
 
 
 
+
+
+---
+# 动态规划
+
+动态规划背后的基本思想非常简单。就是将一个问题拆分为子问题，一般来说这些子问题都是非常相似的，那么我们可以通过只解决一次每个子问题来达到减少计算量的目的。
+
+一旦得出每个子问题的解，就存储该结果以便下次使用
+
+> 本质就是问题的拆分，每个子问题的解决方案与问题本身是相似的，所以可以通过得到子问题的解来解决问题本身。
+
+## 斐波那契数列
+
+### 定义
+
+指的是从0和1起始的一个数列，后面每个数都是前两个数之和
+
+```js
+0 1 1 2 3 5 8 13, 21, 34, 55, 89...
+```
+
+### 方案
+
+根据定义我们很容易想到使用递归求解，主要关系是：
+```js
+fib(n) = fib(n - 1) + fib(n - 2);
+```
+
+所以我们很容易得到递归的代码：
+
+```js
+function fib(n) {
+    if (n >= 0 && n < 2) return n;
+    return fib(n - 1) + fib(n - 2);
+}
+
+```
+
+> 递归算法的时间复杂度本质上是看：`递归的次数 * 每次递归中的操作数`
+
+以上代码已经可以完美的解决问题。`但是以上解法却存在很严重的性能问题`，当 n 越大的时候，需要的时间是指数增长的，这时候就可以通过动态规划来解决这个问题。
+
+
+`动态规划的本质其实就是两点`:
+1. 自顶向上分解子问题
+2. 通过变量存储已经计算过的值
+
+根据以上两点，斐波那契数列的动态规划解法也就出来了
+
+1. 斐波那契数列从0和1,开始，这是最底层的子问题
+2. 通过数组来存储每一位所对应的菲波那切数列的值
+
+```js
+function fib(n) {
+    let arr = new Array(n + 1).fill(null);
+
+    arr[0] = 0;
+    arr[1] = 1;
+    
+    for (let i = 2; i<= n; i++) {
+        arr[i] = arr[i - 1] + arr[i - 2];
+    }
+
+    return arr[n];
+}
+```
+
+## 0 - 1 背包问题
+
+> 该问题可以描述为：给定一组物品，每种物品都有自己的重量和价格，在`限定的总重量`内，我们如何选择，才能使得物品的`总价格最高`。每个物品只能`放入至多一次`。
+
+| 物品ID/重量|价值
+|-|-|
+|1|3
+|2|7|
+|3|12|
+
+对于一个总容量为 5 的背包来说，我们可以放入重量 2 和 3 的物品来达到背包内的物品总价值最高。
+
+对于这个问题来说，`子问题就两个，分别是放物品和不放物品`，可以通过以下表格来理解子问题
+
+| 物品ID/剩余容量|0|1|2|3|4|5|
+|-|-|-|-|-|-|-|
+|1|0|3|3|3|3|3|
+|2|0|3|7|10|10|10|
+|3|0|3|7|12|15|19|
+
+直接来分析能放三种物品的情况，也就是最后一行：
+
+- 容量小于3时，不能取商品3，所以只能取上一行的数据（第二行）
+
+- 容量等于3时，分是否放入商品3考虑：
+    - 不放物品 3 的情况下，总价值为 10
+    - 放入物品 3 的情况下，总价值为 12，所以应该放入物品 3
+
+- 容量等于4时，分是否放入商品3考虑：
+    - 不放物品 3 的情况下，总价值为 10
+    - 放入物品 3 的情况下，总价值为 15（加商品1），所以应该放入物品 3
+
+- 容量等于5时，分是否放入商品3考虑：
+    - 不放物品 3 的情况下，总价值为 10
+    - 放入物品 3 的情况下，总价值为 19（加商品2），所以应该放入物品 3
+
+以下代码对照上表更容易理解
+
+```js
+/**
+ * @param {*} w 物品重量
+ * @param {*} v 物品价值
+ * @param {*} C 总容量
+ * @returns
+ */
+function knapsack(w, v, C) {
+  let length = w.length
+  if (length === 0) return 0
+
+  // 对照表格，生成的二维数组，第一维代表物品，第二维代表背包剩余容量
+  // 第二维中的元素代表背包物品总价值
+  let array = new Array(length).fill(new Array(C + 1).fill(null))
+
+  // 完成底部子问题的解
+  for (let i = 0; i <= C; i++) {
+    // 对照表格第一行， array[0] 代表物品 1
+    // i 代表剩余总容量
+    // 当剩余总容量大于物品 1 的重量时，记录下背包物品总价值，否则价值为 0
+    array[0][i] = i >= w[0] ? v[0] : 0
+  }
+
+  // 自底向上开始解决子问题，从物品 2 开始
+  for (let i = 1; i < length; i++) {
+    for (let j = 0; j <= C; j++) {
+      // 这里求解子问题，分别为不放当前物品和放当前物品
+      // 先求不放当前物品的背包总价值，这里的值也就是对应表格中上一行对应的值
+      array[i][j] = array[i - 1][j]
+      // 判断当前剩余容量是否可以放入当前物品
+      if (j >= w[i]) {
+        // 可以放入的话，就比大小
+        // 放入当前物品和不放入当前物品，哪个背包总价值大
+        array[i][j] = Math.max(array[i][j], v[i] + array[i - 1][j - w[i]])
+      }
+    }
+  }
+  return array[length - 1][C]
+}
+```
+
+## 最长递增子序列
+
+最长递增子序列意思是在一组数字中，找出最长一串递增的数字，比如
+
+0, 3, 4, 17, 2, 8, 6, 10
+
+对于以上这串数字来说，最长递增子序列就是 `0, 3, 4, 8, 10`，可以通过以下表格更清晰的理解
+
+|数字|0|3|4|17|2|8|6|10|
+|-|-|-|-|-|-|-|-|-|
+|长度|1|2|3|4 |2|4|4|5|
+
+通过以上表格可以很清晰的发现一个规律，`找出刚好比当前数字小的数，并且在小的数组成的长度基础上加一`。
+
+这个问题的动态思路解法很简单，直接上代码
+
+```js
+function lis(n) {
+  if (n.length === 0) return 0
+  // 创建一个和参数相同大小的数组，并填充值为 1
+  let array = new Array(n.length).fill(1)
+  // 从索引 1 开始遍历，因为数组已经所有都填充为 1 了
+  for (let i = 1; i < n.length; i++) {
+    // 从索引 0 遍历到 i
+    // 判断索引 i 上的值是否大于之前的值
+    for (let j = 0; j < i; j++) {
+      if (n[i] > n[j]) {
+        array[i] = Math.max(array[i], 1 + array[j])
+      }
+    }
+  }
+  let res = 1
+  for (let i = 0; i < array.length; i++) {
+    res = Math.max(res, array[i])
+  }
+  return res
+}
+```
+
+# 字符串相关
+
+在字符串相关算法中，`Trie` 树可以解决解决很多问题，同时具备良好的空间和时间复杂度，比如以下问题：
+
+- 词频统计
+- 前缀匹配
 
 
 

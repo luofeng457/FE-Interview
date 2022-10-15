@@ -706,6 +706,90 @@ export default class Index extends Component {
 我们可以看到各种template之间多了0、1、2、3这种标号..就是为了解决无法递归调用的问题，提前多造几个名字不同功能相同的template，不就能跨过递归调用的限制了么...
 
 
+### 同层渲染
+
+可参考文档[小程序同层渲染原理剖析](https://developers.weixin.qq.com/community/develop/article/doc/000c4e433707c072c1793e56f5c813)
+
+如果大家开发过小程序，应该对这个名词就不会陌生。小程序中有一类组件叫做`原生组件`（native-component），比如camera、video等，这类组件在渲染过程中最终会映射成下文提到的原生组件。
+
+- `原生组件`：iOS、Android 等客户端 Native 组件，如 iOS 中的 UITextField、UITextView，Android 中的 EditText、ListView 等；
+- `H5 组件`：是指 HTML5 语言编写的 web 组件，如<input/>、 <textarea></textarea>等；
+
+
+#### 应用及概念
+
+任何技术的产生都是伴随着需求或问题，那么`同层渲染的产生到底是解决什么问题呢`？
+
+上文已经提到`原生组件比 H5 组件性能更好`，所以说对于一些 H5 组件，我们`希望其在客户端渲染时被映射成原生组件`，那么问题来了：作为客户端来讲，我们`一般会采用 WebView 加载 HTML，原生组件脱离在 WebView 渲染流程外`，如果`把 WebView 看成单独的一层，那么原生组件则位于另一个更高的层级`。那么这样的层级就带来了一些问题：
+
+- 原生组件的`层级是最高`的：页面中的其他组件无论设置 z-index 为多少，都无法盖在原生组件上；
+
+- 部分 CSS 样式无法应用于原生组件；
+
+- `原生组件无法在 scroll-view 等可滚动的 H5 组件中使用`：因为如果开发者在可滚动的 DOM 区域，插入原生组件作为其子节点，由于原生组件是直接插入到 WebView 外部的层级，与 DOM 之间没有关联，所以不会跟随移动也不会被裁减。
+
+![](./assets/not-same-level-render.jpeg)
+
+
+为了解决这个问题，便出来了`同层渲染`。其`本质就是原生组件可以和 H5 组件可以在同一个层级上显示，使原生组件与 H5 组件可以随意叠加，去除层级限制。像使用 H5 组件一样去使用原生组件，设置组件的样式`等等。
+
+![](./assets/same-level-render.jpeg)
+
+> 同层渲染是允许将 Native 组件和 WebView DOM 元素混合在一起进行渲染的技术，能够保证 Native 组件和 DOM 元素体感一致，渲染层级、滚动感受、触摸事件等方面几乎没有区别。
+
+
+#### 同层渲染原理
+
+实际上，小程序的`同层渲染在 iOS 和 Android 平台下的实现不同`，因此下面分成两部分来分别介绍两个平台的实现方案。
+
+##### ios
+
+小程序在 iOS 端使用 WKWebView 进行渲染的，WKWebView 在内部采用的是分层的方式进行渲染，它会将 WebKit 内核生成的 Compositing Layer（合成层）渲染成 iOS 上的一个 WKCompositingView，这是一个客户端原生的 View，不过可惜的是，内核一般会将多个 DOM 节点渲染到一个 Compositing Layer 上，因此合成层与 DOM 节点之间不存在一对一的映射关系。不过我们发现，当把一个 DOM 节点的 CSS 属性设置为 overflow: scroll （低版本需同时设置 -webkit-overflow-scrolling: touch）之后，WKWebView 会为其生成一个 `WKChildScrollView`，与 DOM 节点存在映射关系，这是一个原生的 UIScrollView 的子类，也就是说 `WebView 里的滚动实际上是由真正的原生滚动组件来承载的`。WKWebView 这么做是为了可以让 iOS 上的 WebView 滚动有更流畅的体验。虽说 WKChildScrollView 也是原生组件，但 WebKit 内核已经处理了它与其他 DOM 节点之间的层级关系，因此你可以直接使用 WXSS 控制层级而不必担心遮挡的问题。
+
+小程序 iOS 端的「同层渲染」也正是基于 `WKChildScrollView` 实现的，原生组件在 `attached` 之后会直接挂载到预先创建好的 WKChildScrollView 容器下，大致的流程如下：
+
+1. 创建一个 DOM 节点并设置其 CSS 属性为 `overflow: scroll` 且 `-webkit-overflow-scrolling: touch`；
+2. 通知客户端查找到该 DOM 节点对应的原生 `WKChildScrollView` 组件；
+3. 将原生组件挂载到该 `WKChildScrollView` 节点上作为其`子 View`。
+
+
+##### Android
+
+小程序在 Android 端采用 chromium 作为 WebView 渲染层，`与 iOS 不同的是，Android 端的 WebView 是单独进行渲染而不会在客户端生成类似 iOS 那样的 Compositing View (合成层)`，经渲染后的 WebView 是一个完整的视图，因此需要采用其他的方案来实现「同层渲染」。经过我们的调研发现，chromium 支持 WebPlugin 机制，`WebPlugin 是浏览器内核的一个插件机制`，主要用来解析和描述embed 标签。`Android 端的同层渲染就是基于 embed 标签结合 chromium 内核扩展来实现的`。
+
+![](./assets/android-embed.png)
+
+Android 端「同层渲染」的大致流程如下:
+1. WebView 侧创建一个 `embed DOM` 节点并`指定组件类型`；
+2. chromium 内核会创建一个 WebPlugin 实例，并生成一个 RenderLayer；
+3. Android 客户端初始化一个对应的原生组件；
+4. Android 客户端将原生组件的画面绘制到步骤2创建的` RenderLayer 所绑定的 SurfaceTexture 上`；
+5. 通知 chromium 内核渲染该 RenderLayer；
+6. chromium 渲染该 embed 节点并上屏。40000000010022
+
+
+![](./assets/android-embed-2.jfif)
+
+这样就实现了把一个原生组件渲染到 WebView 上，这个流程`相当于给 WebView 添加了一个外置的插件`，如果你有留意 `Chrome 浏览器上的 pdf 预览，会发现实际上它也是基于 <embed /> 标签实现的`
+
+
+> 对比 iOS 端的实现，`Android 端的「同层渲染」真正将原生组件视图加到了 WebView 的渲染流程中且 embed 节点是真正的 DOM 节点`，理论上可以将任意 WXSS 属性作用在该节点上。`Android 端相对来说是更加彻底的「同层渲染」，但相应的重构成本也会更高一些`。
+
+#### 同层渲染tips
+
+- Tips 1. 不是所有情况均会启用「同层渲染」
+
+- Tips 2. iOS 「同层渲染」与 WebView 渲染稍有区别
+
+  我们已经了解了 iOS 端同层渲染的原理，实际上，WebKit 内核并不感知原生组件的存在，因此并非所有的 WXSS 属性都可以在原生组件上生效。一般来说，定位 (position / margin / padding) 、尺寸 (width / height) 、transform (scale / rotate / translate) 以及层级 (z-index) 相关的属性均可生效，在原生组件外部的属性 (如 shadow、border) 一般也会生效。但如需对组件做裁剪则可能会失败，例如：border-radius 属性应用在父节点不会产生圆角效果。
+
+- Tips 3. 「同层渲染」的事件机制
+
+  启用了「同层渲染」之后的原生组件相比于之前的区别是原生组件上的事件也会冒泡，意味着，一个原生组件或原生组件的子节点上的事件也会冒泡到其父节点上并触发父节点的事件监听，通常可以使用 catch 来阻止原生组件的事件冒泡。
+
+- Tips 4. 只有子节点才会进入全屏
+
+  有别于非同层渲染的原生组件，像 video 和 live-player 这类组件进入全屏时，只有其子节点会被显示。
 
 ## 另一种粗暴的跨端
 
@@ -765,4 +849,5 @@ export default class Index extends Component {
 # 参考文献
 1. [聊聊跨端技术的本质与现状](https://mp.weixin.qq.com/s/G_2eBJyrr6FHm7WjI_MIPw)
 2. [JSbridge原理与实现简析](https://blog.csdn.net/luofeng457/article/details/108229675)
-
+3. [同层渲染](https://www.mdnice.com/writing/8b6b53eeb7144740a0f2eaa34054cc98)
+4. [小程序同层渲染原理剖析](https://developers.weixin.qq.com/community/develop/article/doc/000c4e433707c072c1793e56f5c813)
