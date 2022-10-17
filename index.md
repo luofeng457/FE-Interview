@@ -344,6 +344,7 @@ var foo = 1;
 
 ### 闭包
 `定义`：函数A返回了一个函数B，并且函数B中使用了函数A的变量，则函数B就被称为闭包；
+更准确的定义应当是：如果一个函数能访问外部变量，那么就形成了一个闭包。
 
 ```
 function A() {
@@ -356,6 +357,25 @@ function A() {
 ```
 
 > 你是否会疑惑，为什么`函数 A 已经弹出调用栈了，为什么函数 B 还能引用到函数 A 中的变量。因为函数 A 中的变量这时候是存储在堆上的`。现在的 JS 引擎可以通过逃逸分析辨别出哪些变量需要存储在堆上，哪些需要存储在栈上。
+
+![](./assets/closure.png)
+
+```js
+let a = 1;
+var b = 2;
+
+function fn() {
+    console.log(a, b);
+}
+
+console.dir(fn)
+```
+
+![](./assets/closure2.png)
+
+从上图我们能发现全局下声明的变量，如果是` var 的话就直接被挂到 global 上，如果是其他关键字声明的话就被挂到 Script 上`。虽然这些数据同样还是存在 [[Scopes]] 上，但是全局变量在内存中是存放在静态区域的，因为全局变量无需进行垃圾回收。
+
+> 最后总结一下`原始类型存储`位置：`局部变量被存储在栈上，全局变量存储在静态区域上，其它都存储在堆上`。
 
 ### 深浅拷贝
 
@@ -439,7 +459,52 @@ function deepClone(originObj, typedObj) {
     }
     return obj;
 }
+
+// 处理缓存及循环引用
+let map = new WeakMap();
+
+function deepClone2(obj) {
+    if (obj instanceof Object) {
+        // 缓存
+        if (map.has(obj)) {
+            return map.get(obj);
+        }
+
+        let newObj;
+
+        // 区分类型处理
+        if (obj instanceof Array) {
+            newObj = [];
+        } else if (obj instanceof Function) {
+            newObj = function() {
+                return obj.apply(this, arguments);
+            }
+        } else if (obj instanceof RegExp) {
+            newObj = new RegExp(obj.source, obj.flags);
+        } else if (obj instanceof Date) {
+            newObj = new Date(obj);
+        } else {
+            newObj = {};
+        }
+
+        let desc = Object.getOwnPropertyDescriptors(obj);
+        let clone = Object.create(Object.getPrototypeOf(obj), desc);
+
+        map.set(obj, clone);
+
+        // 递归处理子属性
+        for (let key in obj) {
+            newObj[key] = deepClone2(obj[key]);
+        }
+
+        return newObj;
+    }
+
+    // 原始类型直接返回值
+    return obj;
+}
 ```
+
 
 ### 模块化
 #### ES6模块
@@ -1230,6 +1295,8 @@ MyPromise.prototype.then = function (onResolved, onRejected) {
         }));
     }
 
+    // 规范规定，执行 onFulfilled 或者 onRejected 函数时会返回一个 x，并且执行 Promise 解决过程，
+    // 这是为了不同的 Promise 都可以兼容使用，比如 JQuery 的 Promise 能兼容 ES6 的 Promise
     function resolutionProcedure(promise2, x, resolve, reject) {
         // 规范 2.3.1，x 不能和 promise2 相同，避免循环引用
         if (promise2 === x) {
@@ -1304,7 +1371,7 @@ function* test() {
 var b = test(); // 获取生成器对象
 console.log(b.next()) // { value: 2, done: false }
 console.log(b.next()) // { value: 3, done: false }
-console.log(b.next()) // { value: undefined, done:  }
+console.log(b.next()) // { value: undefined, done: true }
 
 ```
 
@@ -1757,7 +1824,7 @@ V8 实现了准确式 GC，GC 算法采用了分代式垃圾回收机制。因�
 - 空间中被对象超过一定限制
 - 空间不能保证新生代中的对象移动到老生代中
 
-在这个阶段中，会遍历堆中所有的对象，`然后标记活的对象，在标记完成后，销毁所有没有被标记的对象`。在标记大型对内存时，可能需要几百毫秒才能完成一次标记。这就会导致一些性能上的问题。为了解决这个问题，2011 年，V8 从 stop-the-world 标记切换到`增量标志`。在增量标记期间，GC 将标记工作分解为更小的模块，可以让 JS 应用逻辑在模块间隙执行一会，从而不至于让应用出现停顿情况。但在 2018 年，GC 技术又有了一个重大突破，这项技术名为并发标记。该技术可以让 GC 扫描和标记对象时，同时允许 JS 运行。
+在这个阶段中，会遍历堆中所有的对象，`然后标记活的对象，在标记完成后，销毁所有没有被标记的对象`。在标记大型对内存时，可能需要几百毫秒才能完成一次标记。这就会导致一些性能上的问题。为了解决这个问题，2011 年，V8 从 stop-the-world 标记切换到`增量标记`。在增量标记期间，GC 将标记工作分解为更小的模块，可以让 JS 应用逻辑在模块间隙执行一会，从而不至于让应用出现停顿情况。但在 2018 年，GC 技术又有了一个重大突破，这项技术名为并发标记。该技术可以让 GC 扫描和标记对象时，同时允许 JS 运行。
 
 除对象后会造成堆内存出现碎片的情况，`当碎片超过一定限制后会启动压缩算法`。在压缩过程中，将活的对象像一端移动，直到所有对象都移动完成然后清理掉不需要的内存。
 
