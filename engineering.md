@@ -371,11 +371,6 @@ yarn.lock没有使用json格式，而是使用了一种自定义的标记方式;
   optionalDependencies:
     chokidar "^2.1.8"
 
-作者：酒窝yun过去了
-链接：https://juejin.cn/post/7060844948316225572
-来源：稀土掘金
-著作权归作者所有。商业转载请联系作者获得授权，非商业转载请注明出处。
-
 > 相比于npm,Yarn另一个显著的区别就是yarn.lock的子依赖的版本不是固定的版本。这其实就说明了一个问题: `一个单独的yarn.lock的问题并不能确定✅node-modules的文件结构,还需要package.json的配合·。`
 
 
